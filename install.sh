@@ -136,6 +136,8 @@ preflight() {
   for t in curl unzip sha256sum python3; do
     command -v "$t" >/dev/null 2>&1 && ok "$t available" || fail "$t is not installed"
   done
+  command -v cabextract >/dev/null 2>&1 && ok "cabextract available" \
+    || warn "cabextract is not installed - only needed if the VC++ runtime installer fails under Wine"
 
   if [ -z "$STEAM" ]; then
     fail "Steam not found (set STEAM_DIR=/path/to/Steam)"
@@ -232,19 +234,23 @@ VDF
 
 # --------------------------------------------------- VC++ runtime (prefix) --
 VCREDIST_URL="https://aka.ms/vs/17/release/vc_redist.x64.exe"
+VC_DLLS="concrt140 msvcp140 msvcp140_1 msvcp140_2 msvcp140_atomic_wait msvcp140_codecvt_ids vcruntime140 vcruntime140_1"
 
-# File version of a PE file, e.g. 14.44.35211.0 (empty if it has none)
-pe_version() {
-  python3 - "$1" <<'PY' 2>/dev/null || true
+# Version of the prefix's msvcp140.dll when it's Microsoft's own build, e.g. 14.44.35211.0.
+# Empty when it's missing or Wine's built-in copy, which reports 14.42 but isn't Microsoft's runtime.
+vc_version() {
+  python3 - "$PREFIX/pfx/drive_c/windows/system32/msvcp140.dll" <<'PY' 2>/dev/null || true
 import struct, sys
 data = open(sys.argv[1], "rb").read()
 i = data.find("VS_VERSION_INFO".encode("utf-16-le"))
 j = data.find(b"\xbd\x04\xef\xfe", i) if i >= 0 else -1
-if j >= 0:
+if j >= 0 and b"Wine builtin DLL" not in data[:0x100]:
     ms, ls = struct.unpack_from("<II", data, j + 8)
     print(f"{ms >> 16}.{ms & 0xffff}.{ls >> 16}.{ls & 0xffff}")
 PY
 }
+
+vc_new_enough() { [ -n "$1" ] && [ "$(printf '%s\n14.40\n' "$1" | sort -V | head -n 1)" = "14.40" ]; }
 
 # Titanfall2VR.dll is built with a recent MSVC and crashes (null read in MSVCP140.dll right
 # after the plugin loads) against the 14.3x runtime the EA app installs into the prefix.
@@ -252,21 +258,41 @@ PY
 ensure_vcredist() {
   echo
   echo "VC++ runtime in the prefix:"
-  local dll="$PREFIX/pfx/drive_c/windows/system32/msvcp140.dll" version
-  version=$(pe_version "$dll")
-  if [ -n "$version" ] && [ "$(printf '%s\n14.40\n' "$version" | sort -V | head -n 1)" = "14.40" ]; then
+  local sys32="$PREFIX/pfx/drive_c/windows/system32" version
+  version=$(vc_version)
+  if vc_new_enough "$version"; then
     ok "msvcp140.dll $version"
     return
   fi
-  echo "  msvcp140.dll is ${version:-missing}, the mod needs 14.40 or newer - installing the current redistributable..."
+  echo "  msvcp140.dll is ${version:-missing or the Wine built-in copy}; the mod needs Microsoft's 14.40 or newer."
+  echo "  Installing the current VC++ redistributable into the Titanfall 2 prefix..."
   mkdir -p "$CACHE"
   curl -fL --progress-bar -o "$CACHE/vc_redist.x64.exe" "$VCREDIST_URL" || die "couldn't download $VCREDIST_URL"
   WINEPREFIX="$PREFIX/pfx" "$TOOL/files/bin/wineserver" -k 2>/dev/null || true
   STEAM_COMPAT_CLIENT_INSTALL_PATH="$STEAM" STEAM_COMPAT_DATA_PATH="$PREFIX" \
     "$PROTON" waitforexitandrun "$CACHE/vc_redist.x64.exe" /install /quiet /norestart >/dev/null 2>&1 || true
-  version=$(pe_version "$dll")
-  [ -n "$version" ] && [ "$(printf '%s\n14.40\n' "$version" | sort -V | head -n 1)" = "14.40" ] \
-    || die "the VC++ redistributable didn't install (msvcp140.dll is still ${version:-missing})"
+  version=$(vc_version)
+
+  # Microsoft's installer sometimes finishes without changing anything under Wine. Copy the
+  # DLLs out of it instead, the way winetricks does: the x64 runtime is the a12 cabinet inside.
+  if ! vc_new_enough "$version" && command -v cabextract >/dev/null 2>&1; then
+    echo "  The installer didn't update it; copying the DLLs out of the redistributable instead..."
+    local tmp dll
+    tmp=$(mktemp -d "$CACHE/vcredist.XXXXXX")
+    cabextract -q -d "$tmp" -F a12 "$CACHE/vc_redist.x64.exe" 2>/dev/null \
+      && cabextract -q -d "$tmp" "$tmp/a12" 2>/dev/null
+    for dll in $VC_DLLS; do
+      [ -f "$tmp/$dll.dll_amd64" ] || continue
+      rm -f "$sys32/$dll.dll"   # may be a link to Proton's own copy; never write through it
+      cp "$tmp/$dll.dll_amd64" "$sys32/$dll.dll"
+    done
+    rm -rf "$tmp"
+    version=$(vc_version)
+  fi
+
+  vc_new_enough "$version" || die "couldn't install the VC++ runtime (msvcp140.dll is ${version:-missing or the Wine built-in copy}).
+Nothing has been installed into the game yet. Install cabextract (e.g. 'sudo apt install cabextract')
+and run ./install.sh again, or install it with: protontricks $APPID vcrun2022"
   ok "msvcp140.dll $version"
 }
 
@@ -477,5 +503,8 @@ if [ "$fails" -gt 0 ]; then
   exit 1
 fi
 echo "Done ($warns warning(s))."
-[ "$MODE" = install ] && echo "Start SteamVR, then run:  tf2vr   (or 'Titanfall 2 VR' in your app menu)"
+if [ "$MODE" = install ]; then
+  echo "Start your headset's OpenXR runtime (e.g. SteamVR), then run:  tf2vr   (or 'Titanfall 2 VR' in your app menu)"
+  echo "Steam's Play button keeps starting the normal, flat game."
+fi
 exit 0

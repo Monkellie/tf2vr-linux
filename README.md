@@ -22,7 +22,7 @@ It also fixes the three things that make the mod crash under Proton (see [Why th
 - A working OpenXR runtime set as active:
   - **SteamVR:** Settings → OpenXR → "Set SteamVR as OpenXR runtime"
   - or WiVRn / Monado
-- `python3`, `curl`, `unzip`, `sha256sum`
+- `python3`, `curl`, `unzip`, `sha256sum`, and preferably `cabextract` (the fallback for installing the VC++ runtime when Microsoft's installer fails under Wine)
 - About 2 GB of free disk space: 1.5 GB for the patched Proton copy, the rest for the mod
 
 ## Install
@@ -40,6 +40,7 @@ It also fixes the three things that make the mod crash under Proton (see [Why th
    - installs Northstar and the mod into `Titanfall2/TF2VR`, plus `Titanfall2VRLauncher.exe` next to the game
    - adds a `tf2vr` command (`~/.local/bin`) and a **Titanfall 2 VR** entry in your app menu
 3. **Restart Steam**, then set **Titanfall 2 → Properties → Compatibility → Proton-TF2VR**. Normal and VR launches must use the same Proton, because switching between Wine versions on one prefix breaks things.
+   This only selects the Proton build. **It doesn't turn on VR**: Steam's Play button still starts the normal, flat game.
 4. *(Optional)* Press Play in Steam once to check the normal game still starts on Proton-TF2VR.
 
 ## Play
@@ -50,7 +51,7 @@ Turn on your headset, then run `tf2vr` in a terminal or pick **Titanfall 2 VR** 
 - launches the mod the same way the Windows installer's Play button does
 - closes the EA app again when you quit
 
-Normal **Play in Steam stays the regular, non-VR game.**
+> **VR only starts through `tf2vr` or the Titanfall 2 VR menu entry.** Steam's Play button always starts the regular, flat game, even with Proton-TF2VR selected.
 
 The VR campaign uses its own save, kept separate from your normal campaign.
 
@@ -92,6 +93,8 @@ It keeps your VR campaign saves (in the Wine prefix) and the logs in `Titanfall2
 
 | Symptom | Cause / fix |
 |---|---|
+| The game starts flat (normal Titanfall 2) | You started it with Steam's Play button, which always starts the flat game. Start VR with `tf2vr` instead. If `tf2vr` doesn't exist, `install.sh` stopped before the end: run it again and read the error. |
+| `install.sh`: `couldn't install the VC++ runtime` | Microsoft's installer did nothing under Wine and `cabextract` isn't available for the fallback. Run `sudo apt install cabextract` (or your distro's equivalent), then `./install.sh` again. Alternatively: `protontricks 1237970 vcrun2022`, then `./install.sh`. |
 | Northstar log: `EXCEPTION_ACCESS_VIOLATION … At: MSVCP140.dll + 0x13028`, and `engine.txt` stops at `stage=openxr_instance` | The VC++ runtime in the prefix is too old. Re-run `./install.sh`, which updates it. |
 | Crash with exit code `0xC0000409` (3221226505) after the menu starts loading | The audio fix isn't active. Check Titanfall 2 is set to **Proton-TF2VR** in Steam, then run `./install.sh --refresh-proton`. |
 | `engine.txt` shows `stage=openxr_instance` and nothing after, with no MSVCP140 crash | The OpenXR runtime isn't reachable. Make sure SteamVR (or WiVRn/Monado) is running, the headset is detected, and it's set as the active OpenXR runtime. |
