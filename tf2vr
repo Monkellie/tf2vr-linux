@@ -79,6 +79,15 @@ while IFS= read -r v; do
 done < <(compgen -e)
 unset XR_RUNTIME_JSON VR_PATHREG_OVERRIDE VR_CONFIG_PATH VR_LOG_PATH
 export TF2VR_OPENXR=1
+
+# VR needs DXVK: wineopenxr hands the game's D3D11 frames to the headset as DXVK textures,
+# so wined3d (often set globally for other games) leaves the headset with nothing to show
+for v in PROTON_USE_WINED3D PROTON_USE_WINED3D11; do
+  if [ -n "${!v+x}" ]; then
+    [ "${!v}" != 0 ] && echo "WARNING: ignoring $v=${!v} - VR needs DXVK, wined3d can't send frames to the headset."
+    unset "$v"
+  fi
+done
 export STEAM_COMPAT_CLIENT_INSTALL_PATH="$STEAM_ROOT"
 export STEAM_COMPAT_DATA_PATH="$PREFIX_DIR"
 # Proton's steam.exe only sets up the VR bridge (vrclient_init_registry, which wineopenxr needs)

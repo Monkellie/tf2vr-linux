@@ -13,7 +13,7 @@ It also fixes the three things that make the mod crash under Proton (see [Why th
 
 **Tested on:** PikaOS (Debian sid), Wayland, NVIDIA GPU, Valve Index with SteamVR 2.17.10, Proton Experimental 11.0 (2026-09-24), mod 1.0.10, Northstar 1.31.13. The main menu and the campaign run in VR with tracked controllers and audio.
 
-**Other headsets:** polar421 has played the campaign on a Quest 3S through WiVRn with a similar setup. These scripts haven't been tested with WiVRn yet; reports welcome.
+**Other headsets:** polar421 has played the campaign on a Quest 3S through WiVRn with a similar setup. With these scripts, a tethered WiVRn user has got as far as the mod finding the headset and controllers through OpenXR, but hasn't reached gameplay yet. Reports welcome.
 
 ## Requirements
 
@@ -97,6 +97,8 @@ It keeps your VR campaign saves (in the Wine prefix) and the logs in `Titanfall2
 | `engine.txt` shows `stage=openxr_instance` and nothing after, with no MSVCP140 crash | The OpenXR runtime isn't reachable. Make sure SteamVR (or WiVRn/Monado) is running, the headset is detected, and it's set as the active OpenXR runtime. |
 | Launch hangs; the Northstar log mentions `LSX: connect()` or Origin | The EA app isn't signed in. Launch Titanfall 2 normally from Steam once, sign in, quit, and try again. |
 | `install.sh` says Titanfall 2 or the EA app is running | Quit the game. If the EA app is stuck, close it from the system tray, or run `WINEPREFIX=<library>/steamapps/compatdata/1237970/pfx ~/.local/share/Steam/compatibilitytools.d/Proton-TF2VR/files/bin/wineserver -k` |
+| Launcher warns `ignoring PROTON_USE_WINED3D`, or the game runs but nothing appears in the headset | VR needs **DXVK**: Proton's OpenXR bridge passes the game's frames to the headset as DXVK textures, so wined3d can't work, and the launcher ignores `PROTON_USE_WINED3D`. If Titanfall 2 only starts with wined3d, your GPU or driver can't run DXVK, which needs Vulkan 1.3. Check `vulkaninfo --summary`. |
+| You copied CircuitLord's installer over `Titanfall2.exe` to run it in Proton | You don't need to; `install.sh` does the installer's job. Verify the game files in Steam to restore `Titanfall2.exe`, and remove any `PROTON_USE_WINED3D` / `WINEDLLOVERRIDES` launch options you added for it. The installer is a WPF app, which is why it seemed to need wined3d. |
 | `Another mod replaced DirectX files` | Remove `dxgi.dll` / `d3d11.dll` from the game folder (ReShade and similar). They take over the frame presentation that VR rendering needs. |
 | Steam isn't found | Point the installer at it: `STEAM_DIR=/path/to/Steam ./install.sh`. Flatpak Steam lives at `~/.var/app/com.valvesoftware.Steam/.local/share/Steam`, but it's untested. |
 
