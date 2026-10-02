@@ -141,7 +141,7 @@ preflight() {
   else warn "neither cabextract nor bsdtar is installed - only needed if the VC++ runtime installer fails under Wine"
   fi
 
-  [ "$(uname -m)" = x86_64 ] || warn "This is a $(uname -m) system. These scripts run Proton's x86_64 Wine directly, which only works on x86_64 PCs."
+  [ "$(uname -m)" = x86_64 ] || warn "This system is $(uname -m). These scripts run Proton's x86_64 Wine directly, which only works on x86_64 PCs (see \"Steam Frame and other ARM devices\" in the README)."
   if [ -z "$STEAM" ]; then
     fail "Steam not found (set STEAM_DIR=/path/to/Steam)"
     return
@@ -334,7 +334,8 @@ check_wine_runs() {
   "$TOOL/files/bin/wine" --version >/dev/null 2>&1 && return 0
   die "Proton's Wine can't run directly on this system ($(uname -m)): $("$TOOL/files/bin/wine" --version 2>&1 | head -n 1)
 These scripts start Proton outside Steam, which only works on x86_64 Linux PCs. Nothing has been
-installed into the game yet."
+installed into the game yet. On a Steam Frame or other ARM headset, run the game on a PC and stream it
+instead: see "Steam Frame and other ARM devices" in the README."
 }
 
 # ------------------------------------------------------------ the mod --

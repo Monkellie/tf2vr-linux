@@ -17,7 +17,7 @@ It also fixes the three things that make the mod crash under Proton (see [Why th
 
 ## Requirements
 
-- An **x86_64** Linux PC. SteamOS on x86 should work but is untested. ARM devices, such as a standalone Steam Frame, aren't supported: these scripts start Proton's x86 Wine directly.
+- An **x86_64** Linux PC. SteamOS on x86 should work but is untested. ARM devices, such as a standalone Steam Frame, can't run these scripts; see [Steam Frame and other ARM devices](#steam-frame-and-other-arm-devices) for the workaround.
 - Titanfall 2 **on Steam**, launched once normally so the EA app is installed and signed in
 - **Proton Experimental** installed in Steam (Library → search "Proton Experimental" → Install)
 - A working OpenXR runtime set as active:
@@ -57,6 +57,22 @@ Turn on your headset, then run `tf2vr` in a terminal or pick **Titanfall 2 VR** 
 The VR campaign uses its own save, kept separate from your normal campaign.
 
 For mod settings, controls and help with the mod itself, see [CircuitLord's Discord](https://discord.gg/MTKwud2cCP).
+
+## Steam Frame and other ARM devices
+
+These scripts **can't run on the headset itself**. A standalone Steam Frame is an ARM device, so it runs x86 games through FEX emulation inside Steam's own runtime. These scripts start Proton's x86 Wine directly, outside Steam, which can't work there. `install.sh` stops with "Proton's Wine can't run directly on this system" before changing anything.
+
+**Workaround: run the game on a PC and stream it to the headset.**
+
+- **From an x86_64 Linux PC:**
+  1. On the PC, follow [Install](#install) above, and make SteamVR the active OpenXR runtime.
+  2. Connect the headset to the PC's SteamVR through Steam's PC VR streaming (on the Frame, with its wireless adapter).
+  3. On the PC, start SteamVR and run `tf2vr`. The game and the mod run on the PC, and the headset shows them.
+- **From a Windows PC:** you don't need these scripts. Use [CircuitLord's official installer](https://github.com/CircuitLord/CircuitLordVRModInstaller), connect the headset to SteamVR, and press Play in the installer.
+
+Streaming a Steam Frame to Linux SteamVR hasn't been tested with these scripts yet. Linux SteamVR ships the Frame's headset and controller profiles and the Steam Link streaming driver, so it should work like any other SteamVR headset. Reports welcome.
+
+Playing standalone on the Frame isn't supported. It would need a different launch method that goes through Steam's runtime, and the headset's mobile chip would have to emulate x86 Titanfall 2, run the EA app, and render both eyes, which is unlikely to be playable.
 
 ## Updating
 
@@ -102,7 +118,7 @@ It keeps your VR campaign saves (in the Wine prefix) and the logs in `Titanfall2
 |---|---|
 | The game starts flat (normal Titanfall 2) | You started it with Steam's Play button, which always starts the flat game. Start VR with `tf2vr` instead. If `tf2vr` doesn't exist, `install.sh` stopped before the end: run it again and read the error. |
 | `install.sh`: `couldn't install the VC++ runtime` | Microsoft's installer did nothing under Wine, and neither `cabextract` nor `bsdtar` was available for the fallback. Make sure you're on the latest scripts (`git pull`), install `cabextract` (e.g. `sudo apt install cabextract`), then run `./install.sh` again. Alternatively: `protontricks 1237970 vcrun2022`, then `./install.sh`. |
-| `install.sh`: `Proton's Wine can't run directly on this system` | These scripts start Proton outside Steam, which needs an x86_64 Linux PC. ARM devices aren't supported. |
+| `install.sh`: `Proton's Wine can't run directly on this system` | These scripts start Proton outside Steam, which needs an x86_64 Linux PC. On a Steam Frame or other ARM device, see [Steam Frame and other ARM devices](#steam-frame-and-other-arm-devices). |
 | Northstar log: `EXCEPTION_ACCESS_VIOLATION … At: MSVCP140.dll + 0x13028`, and `engine.txt` stops at `stage=openxr_instance` | The VC++ runtime in the prefix is too old. Re-run `./install.sh`, which updates it. |
 | Crash with exit code `0xC0000409` (3221226505) after the menu starts loading | The audio fix isn't active. Check Titanfall 2 is set to **Proton-TF2VR** in Steam, then run `./install.sh --refresh-proton`. |
 | `engine.txt` shows `stage=openxr_instance` and nothing after, with no MSVCP140 crash | The OpenXR runtime isn't reachable. Make sure SteamVR (or WiVRn/Monado) is running, the headset is detected, and it's set as the active OpenXR runtime. |
