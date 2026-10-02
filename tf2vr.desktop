@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Titanfall 2 VR
+GenericName=Titanfall 2 (TF2VR mod)
+Comment=Titanfall 2 campaign in VR with CircuitLord's TF2VR mod, through Proton-TF2VR
+Exec=@BIN@
+Icon=@ICON@
+Terminal=false
+Categories=Game;
+Keywords=titanfall;vr;steamvr;openxr;proton;

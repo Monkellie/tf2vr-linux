@@ -1,0 +1,141 @@
+#!/usr/bin/env bash
+# Start Titanfall 2 VR (CircuitLord's TF2VR mod) through Proton-TF2VR.
+# Usage: tf2vr [--proton-log] [extra game args...]     e.g. tf2vr +map sp_crashsite
+#   --proton-log   also save Proton's log (PROTON_LOG=1) to ~/.local/state/tf2vr/steam-1237970.log
+#
+# Mirrors what CircuitLordVRModInstaller.exe does when you press Play on Windows:
+# crash_monitor.exe starts Titanfall2VRLauncher.exe (Northstar) with the TF2VR profile,
+# the arguments from TF2VR/tools/launch.json and TF2VR_OPENXR=1.
+# Paths come from ~/.config/tf2vr/paths.env, written by install.sh.
+set -uo pipefail
+
+CONF="${XDG_CONFIG_HOME:-$HOME/.config}/tf2vr/paths.env"
+LOG_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/tf2vr"
+mkdir -p "$LOG_DIR"
+LOG="$LOG_DIR/launch.log"
+exec > >(tee "$LOG") 2>&1
+
+PROTON_LOG_FILE=""
+if [ "${1:-}" = "--proton-log" ]; then
+  shift
+  export PROTON_LOG=1 PROTON_LOG_DIR="$LOG_DIR"
+  PROTON_LOG_FILE="$LOG_DIR/steam-1237970.log"
+  rm -f "$PROTON_LOG_FILE"
+  echo "Proton log: $PROTON_LOG_FILE"
+fi
+
+die() {
+  echo "ERROR: $1"
+  command -v notify-send >/dev/null 2>&1 && notify-send -a "Titanfall 2 VR" -i dialog-error "Titanfall 2 VR" "$1"
+  exit 1
+}
+
+# Windows path of a Linux path, as Wine sees it through drive Z:
+win() { local p; p=$(readlink -f "$1"); printf 'Z:%s' "${p//\//\\}"; }
+
+[ -f "$CONF" ] || die "Not installed - run install.sh from tf2vr-linux first."
+# shellcheck source=/dev/null
+. "$CONF"
+G="$GAME_DIR"
+for f in Titanfall2VRLauncher.exe TF2VR/Northstar.dll TF2VR/plugins/Titanfall2VR.dll \
+         TF2VR/tools/crash_monitor.exe TF2VR/tools/launch.json; do
+  [ -f "$G/$f" ] || die "$G/$f is missing - run install.sh again."
+done
+[ -x "$PROTON_BIN" ] || die "$PROTON_BIN is missing - run install.sh again."
+
+# Mods that drop their own DirectX next to the game take Present away from VR rendering
+for f in "$G"/{,bin/x64_retail/}{dxgi,d3d11}.dll; do
+  [ -f "$f" ] && die "Another mod replaced DirectX files, which breaks VR rendering. Remove $f and launch again."
+done
+
+python3 - "$(dirname "$PROTON_BIN")/files/lib/wine/x86_64-windows/mmdevapi.dll" <<'PY' \
+  || echo "WARNING: the mmdevapi.dll audio fix isn't applied - expect a 0xC0000409 crash. Run install.sh --refresh-proton."
+import sys
+data = open(sys.argv[1], "rb").read()
+sys.exit(0 if data[0x369E:0x369E + 6] == bytes.fromhex("0f843efdffff") else 1)
+PY
+
+pgrep -x steam >/dev/null || die "Steam isn't running - start Steam first."
+
+# Only SteamVR needs starting here; other OpenXR runtimes (WiVRn, Monado) are started by you
+RUNTIME_JSON="${XDG_CONFIG_HOME:-$HOME/.config}/openxr/1/active_runtime.json"
+[ -f "$RUNTIME_JSON" ] || RUNTIME_JSON=/etc/xdg/openxr/1/active_runtime.json
+[ -f "$RUNTIME_JSON" ] || die "No OpenXR runtime is active. In SteamVR: Settings -> OpenXR -> Set SteamVR as OpenXR runtime."
+if grep -qiE 'steamvr|steamxr' "$(readlink -f "$RUNTIME_JSON")"; then
+  if ! pgrep -x vrserver >/dev/null; then
+    echo "Starting SteamVR..."
+    steam steam://rungameid/250820 >/dev/null 2>&1 &
+    for _ in $(seq 1 60); do pgrep -x vrserver >/dev/null && break; sleep 1; done
+    pgrep -x vrserver >/dev/null || die "SteamVR didn't start - start it yourself, check the headset shows up, then launch again."
+    sleep 5
+  fi
+else
+  echo "OpenXR runtime: $(readlink -f "$RUNTIME_JSON") - make sure it's running and the headset is connected."
+fi
+
+# Same environment the Windows installer gives the game
+while IFS= read -r v; do
+  case "$v" in TF2VR_*) unset "$v" ;; esac
+done < <(compgen -e)
+unset XR_RUNTIME_JSON VR_PATHREG_OVERRIDE VR_CONFIG_PATH VR_LOG_PATH
+export TF2VR_OPENXR=1
+export STEAM_COMPAT_CLIENT_INSTALL_PATH="$STEAM_ROOT"
+export STEAM_COMPAT_DATA_PATH="$PREFIX_DIR"
+# Proton's steam.exe only sets up the VR bridge (vrclient_init_registry, which wineopenxr needs)
+# for processes it thinks Steam launched; without these xrCreateInstance crashes the mod.
+export SteamGameId=1237970 SteamAppId=1237970
+
+# Northstar needs a signed-in EA app; start it first so the launcher doesn't hang at "LSX: connect()".
+# EA's process name is CrBrowserMain, so match argv[0] instead (from polar421's launcher).
+# "EA Desktop\EA Desktop" is the EA app's link to its current version folder; Wine resolves it.
+EA_EXE='C:\Program Files\Electronic Arts\EA Desktop\EA Desktop\EADesktop.exe'
+ea_running() {
+  local p
+  for p in /proc/[0-9]*; do
+    case "$(tr '\0' '\n' 2>/dev/null < "$p/cmdline" | head -n 1)" in
+      *'\EADesktop.exe') return 0 ;;
+    esac
+  done
+  return 1
+}
+if ! ea_running; then
+  echo "Starting the EA app..."
+  "$PROTON_BIN" run "$EA_EXE" >/dev/null 2>&1 &
+  for _ in $(seq 1 45); do ea_running && break; sleep 1; done
+  ea_running || die "The EA app didn't start. Launch Titanfall 2 normally from Steam once to check you're signed in."
+  sleep 8
+fi
+
+# Arguments from the mod's launch.json, filled in the way the Windows installer does
+mapfile -t ARGS < <(python3 - "$G/TF2VR/tools/launch.json" <<'PY'
+import json, sys
+s = json.load(open(sys.argv[1]))
+for arg in s["arguments"] + s["vrArguments"]:
+    print(arg.replace("{profile}", "TF2VR").replace("{width}", "1280")
+             .replace("{height}", "720").replace("{sound}", "1"))
+PY
+)
+[ "${#ARGS[@]}" -gt 0 ] || die "Couldn't read $G/TF2VR/tools/launch.json"
+
+echo "Launching Titanfall 2 VR (log: $LOG)"
+cd "$G" || die "can't enter $G"
+"$PROTON_BIN" run "$G/TF2VR/tools/crash_monitor.exe" "$(win "$G/TF2VR")" "$(win "$G/Titanfall2VRLauncher.exe")" "${ARGS[@]}" "$@" &
+proton_pid=$!
+
+# `proton run` keeps waiting while the EA app is open, so follow crash_monitor.exe instead
+monitor_running() { pgrep -f '^Z:.*crash_monitor\.exe' >/dev/null; }
+for _ in $(seq 1 60); do monitor_running && break; kill -0 "$proton_pid" 2>/dev/null || break; sleep 1; done
+while monitor_running; do sleep 2; done
+
+# crash_monitor.exe records how the game ended in its newest session folder
+session=$(ls -1d "$G"/TF2VR/crashes/*/ 2>/dev/null | tail -n 1)
+rc=$(sed -n 's/.*process_exit pid=[0-9]* code=\([0-9-]*\).*/\1/p' "$session/monitor.txt" 2>/dev/null | tail -n 1)
+echo "Game exited with code ${rc:-unknown}"
+
+# Close the EA app and the rest of the Wine session too; while it runs, Steam still
+# shows Titanfall 2 as running and won't start it normally.
+WINEPREFIX="$PREFIX_DIR/pfx" "$(dirname "$PROTON_BIN")/files/bin/wineserver" -k 2>/dev/null
+wait "$proton_pid" 2>/dev/null
+
+[ -n "$PROTON_LOG_FILE" ] && echo "Proton log saved to $PROTON_LOG_FILE"
+[ "${rc:-1}" = 0 ] || die "Titanfall 2 VR exited with code ${rc:-unknown} - see $LOG, ${session:-$G/TF2VR/crashes} and $G/TF2VR/logs"
