@@ -17,12 +17,13 @@ It also fixes the three things that make the mod crash under Proton (see [Why th
 
 ## Requirements
 
+- An **x86_64** Linux PC. SteamOS on x86 should work but is untested. ARM devices, such as a standalone Steam Frame, aren't supported: these scripts start Proton's x86 Wine directly.
 - Titanfall 2 **on Steam**, launched once normally so the EA app is installed and signed in
 - **Proton Experimental** installed in Steam (Library → search "Proton Experimental" → Install)
 - A working OpenXR runtime set as active:
   - **SteamVR:** Settings → OpenXR → "Set SteamVR as OpenXR runtime"
   - or WiVRn / Monado
-- `python3`, `curl`, `unzip`, `sha256sum`, and preferably `cabextract` (the fallback for installing the VC++ runtime when Microsoft's installer fails under Wine)
+- `python3`, `curl`, `unzip`, `sha256sum`, and preferably `cabextract` or `bsdtar` (the fallback for installing the VC++ runtime when Microsoft's installer fails under Wine; SteamOS already has `bsdtar`)
 - About 2 GB of free disk space: 1.5 GB for the patched Proton copy, the rest for the mod
 
 ## Install
@@ -59,7 +60,13 @@ For mod settings, controls and help with the mod itself, see [CircuitLord's Disc
 
 ## Updating
 
-Run `./install.sh` again. It installs a new mod release (and the Northstar version the official installer pins) when there is one, and removes files the old version used that the new one doesn't. To rebuild from scratch, use `./install.sh --force`.
+Get the latest scripts, then run the installer again:
+```sh
+cd tf2vr-linux
+git pull
+./install.sh
+```
+The installer installs a new mod release (and the Northstar version the official installer pins) when there is one, and removes files the old version used that the new one doesn't. To rebuild from scratch, use `./install.sh --force`.
 
 Proton-TF2VR is a frozen copy, so Steam updates can't break the audio fix. To rebuild it from a newer Proton Experimental, run `./install.sh --refresh-proton`. If the new build's `mmdevapi.dll` doesn't match the fix, the script refuses rather than guessing. In that case keep the old copy and open an issue.
 
@@ -94,7 +101,8 @@ It keeps your VR campaign saves (in the Wine prefix) and the logs in `Titanfall2
 | Symptom | Cause / fix |
 |---|---|
 | The game starts flat (normal Titanfall 2) | You started it with Steam's Play button, which always starts the flat game. Start VR with `tf2vr` instead. If `tf2vr` doesn't exist, `install.sh` stopped before the end: run it again and read the error. |
-| `install.sh`: `couldn't install the VC++ runtime` | Microsoft's installer did nothing under Wine and `cabextract` isn't available for the fallback. Run `sudo apt install cabextract` (or your distro's equivalent), then `./install.sh` again. Alternatively: `protontricks 1237970 vcrun2022`, then `./install.sh`. |
+| `install.sh`: `couldn't install the VC++ runtime` | Microsoft's installer did nothing under Wine, and neither `cabextract` nor `bsdtar` was available for the fallback. Make sure you're on the latest scripts (`git pull`), install `cabextract` (e.g. `sudo apt install cabextract`), then run `./install.sh` again. Alternatively: `protontricks 1237970 vcrun2022`, then `./install.sh`. |
+| `install.sh`: `Proton's Wine can't run directly on this system` | These scripts start Proton outside Steam, which needs an x86_64 Linux PC. ARM devices aren't supported. |
 | Northstar log: `EXCEPTION_ACCESS_VIOLATION … At: MSVCP140.dll + 0x13028`, and `engine.txt` stops at `stage=openxr_instance` | The VC++ runtime in the prefix is too old. Re-run `./install.sh`, which updates it. |
 | Crash with exit code `0xC0000409` (3221226505) after the menu starts loading | The audio fix isn't active. Check Titanfall 2 is set to **Proton-TF2VR** in Steam, then run `./install.sh --refresh-proton`. |
 | `engine.txt` shows `stage=openxr_instance` and nothing after, with no MSVCP140 crash | The OpenXR runtime isn't reachable. Make sure SteamVR (or WiVRn/Monado) is running, the headset is detected, and it's set as the active OpenXR runtime. |

@@ -136,9 +136,12 @@ preflight() {
   for t in curl unzip sha256sum python3; do
     command -v "$t" >/dev/null 2>&1 && ok "$t available" || fail "$t is not installed"
   done
-  command -v cabextract >/dev/null 2>&1 && ok "cabextract available" \
-    || warn "cabextract is not installed - only needed if the VC++ runtime installer fails under Wine"
+  if command -v cabextract >/dev/null 2>&1; then ok "cabextract available"
+  elif command -v bsdtar >/dev/null 2>&1; then ok "bsdtar available"
+  else warn "neither cabextract nor bsdtar is installed - only needed if the VC++ runtime installer fails under Wine"
+  fi
 
+  [ "$(uname -m)" = x86_64 ] || warn "This is a $(uname -m) system. These scripts run Proton's x86_64 Wine directly, which only works on x86_64 PCs."
   if [ -z "$STEAM" ]; then
     fail "Steam not found (set STEAM_DIR=/path/to/Steam)"
     return
@@ -252,6 +255,32 @@ PY
 
 vc_new_enough() { [ -n "$1" ] && [ "$(printf '%s\n14.40\n' "$1" | sort -V | head -n 1)" = "14.40" ]; }
 
+# extract_vc_dlls <vc_redist.x64.exe> <dir>: unpack the x64 runtime (*.dll_amd64) the way winetricks
+# does. It's the a12 cabinet inside the bundle. cabextract finds it directly; bsdtar (part of
+# libarchive, present on SteamOS) only reads the first cabinet, so cut each one out first.
+extract_vc_dlls() {
+  local exe=$1 out=$2 cab
+  if command -v cabextract >/dev/null 2>&1; then
+    cabextract -q -d "$out" -F a12 "$exe" 2>/dev/null && cabextract -q -d "$out" "$out/a12" 2>/dev/null && return 0
+  fi
+  command -v bsdtar >/dev/null 2>&1 || return 1
+  python3 - "$exe" "$out" <<'PY' || return 1
+import os, struct, sys
+data, out, i, n = open(sys.argv[1], "rb").read(), sys.argv[2], 0, 0
+while (i := data.find(b"MSCF\0\0\0\0", i)) >= 0:
+    size = struct.unpack_from("<I", data, i + 8)[0]
+    if 0 < size <= len(data) - i:
+        open(os.path.join(out, f"bundle{n}.cab"), "wb").write(data[i:i + size])
+        n, i = n + 1, i + size
+    else:
+        i += 4
+PY
+  for cab in "$out"/bundle*.cab; do
+    bsdtar -xf "$cab" -C "$out" a12 2>/dev/null && break
+  done
+  [ -f "$out/a12" ] && bsdtar -xf "$out/a12" -C "$out" 2>/dev/null
+}
+
 # Titanfall2VR.dll is built with a recent MSVC and crashes (null read in MSVCP140.dll right
 # after the plugin loads) against the 14.3x runtime the EA app installs into the prefix.
 # Install the current VC++ 2015-2022 x64 redistributable, as a Windows PC would have.
@@ -270,17 +299,16 @@ ensure_vcredist() {
   curl -fL --progress-bar -o "$CACHE/vc_redist.x64.exe" "$VCREDIST_URL" || die "couldn't download $VCREDIST_URL"
   WINEPREFIX="$PREFIX/pfx" "$TOOL/files/bin/wineserver" -k 2>/dev/null || true
   STEAM_COMPAT_CLIENT_INSTALL_PATH="$STEAM" STEAM_COMPAT_DATA_PATH="$PREFIX" \
-    "$PROTON" waitforexitandrun "$CACHE/vc_redist.x64.exe" /install /quiet /norestart >/dev/null 2>&1 || true
+    "$PROTON" waitforexitandrun "$CACHE/vc_redist.x64.exe" /install /quiet /norestart > "$CACHE/vc_redist.log" 2>&1 || true
   version=$(vc_version)
 
   # Microsoft's installer sometimes finishes without changing anything under Wine. Copy the
   # DLLs out of it instead, the way winetricks does: the x64 runtime is the a12 cabinet inside.
-  if ! vc_new_enough "$version" && command -v cabextract >/dev/null 2>&1; then
+  if ! vc_new_enough "$version"; then
     echo "  The installer didn't update it; copying the DLLs out of the redistributable instead..."
     local tmp dll
     tmp=$(mktemp -d "$CACHE/vcredist.XXXXXX")
-    cabextract -q -d "$tmp" -F a12 "$CACHE/vc_redist.x64.exe" 2>/dev/null \
-      && cabextract -q -d "$tmp" "$tmp/a12" 2>/dev/null
+    extract_vc_dlls "$CACHE/vc_redist.x64.exe" "$tmp" || true
     for dll in $VC_DLLS; do
       [ -f "$tmp/$dll.dll_amd64" ] || continue
       rm -f "$sys32/$dll.dll"   # may be a link to Proton's own copy; never write through it
@@ -290,10 +318,23 @@ ensure_vcredist() {
     version=$(vc_version)
   fi
 
-  vc_new_enough "$version" || die "couldn't install the VC++ runtime (msvcp140.dll is ${version:-missing or the Wine built-in copy}).
-Nothing has been installed into the game yet. Install cabextract (e.g. 'sudo apt install cabextract')
-and run ./install.sh again, or install it with: protontricks $APPID vcrun2022"
+  if ! vc_new_enough "$version"; then
+    echo "  Last lines of the redistributable's output ($CACHE/vc_redist.log):" >&2
+    tail -n 8 "$CACHE/vc_redist.log" 2>/dev/null | sed 's/^/    /' >&2
+    die "couldn't install the VC++ runtime (msvcp140.dll is ${version:-missing or the Wine built-in copy}).
+Nothing has been installed into the game yet. Install cabextract or bsdtar (libarchive) and run
+./install.sh again, or install the runtime with: protontricks $APPID vcrun2022"
+  fi
   ok "msvcp140.dll $version"
+}
+
+# Everything after this runs Windows programs through Proton-TF2VR directly (outside Steam), which
+# needs Proton's x86_64 Wine to start on this machine.
+check_wine_runs() {
+  "$TOOL/files/bin/wine" --version >/dev/null 2>&1 && return 0
+  die "Proton's Wine can't run directly on this system ($(uname -m)): $("$TOOL/files/bin/wine" --version 2>&1 | head -n 1)
+These scripts start Proton outside Steam, which only works on x86_64 Linux PCs. Nothing has been
+installed into the game yet."
 }
 
 # ------------------------------------------------------------ the mod --
@@ -491,6 +532,7 @@ case "$MODE" in
     if pgrep -f '[\\/](Titanfall2|Titanfall2VRLauncher|EADesktop)\.exe' >/dev/null; then
       die "Titanfall 2 or the EA app is running - close them first"
     fi
+    check_wine_runs
     ensure_vcredist
     install_mod
     install_launcher
