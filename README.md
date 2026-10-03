@@ -1,158 +1,175 @@
 # Titanfall 2 VR on Linux
 
-Play [CircuitLord's Titanfall 2 VR mod](https://github.com/CircuitLord/CircuitLordVRModInstaller) on Linux through Proton.
+Play [CircuitLord's Titanfall 2 VR mod](https://github.com/CircuitLord/CircuitLordVRModInstaller) on Linux. The official installer only runs on Windows. This repo does the same job on Linux, and fixes the crashes the mod hits under Proton.
 
-The official installer is a Windows program. `install.sh` does the same job on Linux:
-- It downloads the same files: Northstar and the mod, both from their official release links, checked against the official SHA-256 checksums.
-- It builds the mod's game assets from your own game files.
-- It puts everything in the same separate `TF2VR` profile.
+- Your normal Titanfall 2 stays unmodded. The mod lives in its own `TF2VR` profile, with its own campaign save.
+- Everything comes from the official release links, checked against the official checksums. This repo contains no game or mod files.
 
-Your normal Titanfall 2 stays unmodded. This repo contains no game or mod files.
+## What you need
 
-It also fixes the three things that make the mod crash under Proton (see [Why these fixes are needed](#why-these-fixes-are-needed)).
-
-**Tested on:** PikaOS (Debian sid), Wayland, NVIDIA GPU, Valve Index with SteamVR 2.17.10, Proton Experimental 11.0 (2026-09-24), mod 1.0.10, Northstar 1.31.13. The main menu and the campaign run in VR with tracked controllers and audio.
-
-**Other headsets:** polar421 has played the campaign on a Quest 3S through WiVRn with a similar setup. With these scripts, a tethered WiVRn user has got as far as the mod finding the headset and controllers through OpenXR, but hasn't reached gameplay yet. Reports welcome.
-
-## Requirements
-
-- An **x86_64** Linux PC. SteamOS on x86 should work but is untested. ARM devices, such as a standalone Steam Frame, can't run these scripts; see [Steam Frame and other ARM devices](#steam-frame-and-other-arm-devices) for the workaround.
-- Titanfall 2 **on Steam**, launched once normally so the EA app is installed and signed in
-- **Proton Experimental** installed in Steam (Library → search "Proton Experimental" → Install)
-- A working OpenXR runtime set as active:
-  - **SteamVR:** Settings → OpenXR → "Set SteamVR as OpenXR runtime"
-  - or WiVRn / Monado
-- `python3`, `curl`, `unzip`, `sha256sum`, and preferably `cabextract` or `bsdtar` (the fallback for installing the VC++ runtime when Microsoft's installer fails under Wine; SteamOS already has `bsdtar`)
-- About 2 GB of free disk space: 1.5 GB for the patched Proton copy, the rest for the mod
+- An **x86_64** Linux PC. A standalone Steam Frame or other ARM device can't run this ([why](#can-i-play-on-a-steam-frame-or-other-arm-device)).
+- **Titanfall 2 on Steam**
+- **Proton Experimental**, installed in Steam: Library → search "Proton Experimental" → Install
+- A **VR runtime**: SteamVR (Settings → OpenXR → "Set SteamVR as OpenXR runtime"), or WiVRn / Monado
+- A few tools:
+  - Arch, CachyOS, EndeavourOS: `sudo pacman -S --needed python unzip cabextract`
+  - Debian, Ubuntu: `sudo apt install python3 curl unzip cabextract`
+  - Fedora: `sudo dnf install python3 curl unzip cabextract`
+- About 2 GB of free disk space
 
 ## Install
 
-1. **Launch Titanfall 2 once from Steam the normal way.** Sign in to the EA app, wait for the main menu, then quit.
+1. **Start Titanfall 2 once from Steam, the normal way.** Sign in to the EA app, wait for the main menu, then quit.
 2. **Run the installer:**
    ```sh
    git clone https://github.com/Monkellie/tf2vr-linux.git
    cd tf2vr-linux
    ./install.sh
    ```
-   It checks your setup first; `./install.sh --check` runs only the checks and changes nothing. Then it:
-   - copies Proton Experimental to `compatibilitytools.d/Proton-TF2VR` and applies the audio fix to **that copy only**, so your other games are untouched
-   - installs the current Microsoft VC++ 2015–2022 runtime into the Titanfall 2 prefix if the one there is too old
-   - installs Northstar and the mod into `Titanfall2/TF2VR`, plus `Titanfall2VRLauncher.exe` next to the game
-   - adds a `tf2vr` command (`~/.local/bin`) and a **Titanfall 2 VR** entry in your app menu
-3. **Restart Steam**, then set **Titanfall 2 → Properties → Compatibility → Proton-TF2VR**. Normal and VR launches must use the same Proton, because switching between Wine versions on one prefix breaks things.
-   This only selects the Proton build. **It doesn't turn on VR**: Steam's Play button still starts the normal, flat game.
-4. *(Optional)* Press Play in Steam once to check the normal game still starts on Proton-TF2VR.
+   It checks your system first and tells you if anything is missing.
+3. **Restart Steam**, then set **Titanfall 2 → Properties → Compatibility → Proton-TF2VR**.
 
 ## Play
 
-Turn on your headset, then run `tf2vr` in a terminal or pick **Titanfall 2 VR** from your app menu. The launcher:
-- starts SteamVR, when SteamVR is your OpenXR runtime
-- starts the EA app and waits until it's signed in
-- launches the mod the same way the Windows installer's Play button does
-- closes the EA app again when you quit
+Put your headset on, then run `tf2vr` in a terminal or pick **Titanfall 2 VR** in your app menu. It starts SteamVR and the EA app for you, and closes the EA app when you quit.
 
-> **VR only starts through `tf2vr` or the Titanfall 2 VR menu entry.** Steam's Play button always starts the regular, flat game, even with Proton-TF2VR selected.
-
-The VR campaign uses its own save, kept separate from your normal campaign.
+> Steam's **Play** button always starts the normal, flat game. VR only starts through `tf2vr` or the Titanfall 2 VR menu entry.
 
 For mod settings, controls and help with the mod itself, see [CircuitLord's Discord](https://discord.gg/MTKwud2cCP).
 
-## Steam Frame and other ARM devices
+## Update
 
-These scripts **can't run on the headset itself**. A standalone Steam Frame is an ARM device, so it runs x86 games through FEX emulation inside Steam's own runtime. These scripts start Proton's x86 Wine directly, outside Steam, which can't work there. `install.sh` stops with "Proton's Wine can't run directly on this system" before changing anything.
-
-**Workaround: run the game on a PC and stream it to the headset.**
-
-- **From an x86_64 Linux PC:**
-  1. On the PC, follow [Install](#install) above, and make SteamVR the active OpenXR runtime.
-  2. Connect the headset to the PC's SteamVR through Steam's PC VR streaming (on the Frame, with its wireless adapter).
-  3. On the PC, start SteamVR and run `tf2vr`. The game and the mod run on the PC, and the headset shows them.
-- **From a Windows PC:** you don't need these scripts. Use [CircuitLord's official installer](https://github.com/CircuitLord/CircuitLordVRModInstaller), connect the headset to SteamVR, and press Play in the installer.
-
-Streaming a Steam Frame to Linux SteamVR hasn't been tested with these scripts yet. Linux SteamVR ships the Frame's headset and controller profiles and the Steam Link streaming driver, so it should work like any other SteamVR headset. Reports welcome.
-
-Playing standalone on the Frame isn't supported. It would need a different launch method that goes through Steam's runtime, and the headset's mobile chip would have to emulate x86 Titanfall 2, run the EA app, and render both eyes, which is unlikely to be playable.
-
-## Updating
-
-Get the latest scripts, then run the installer again:
 ```sh
 cd tf2vr-linux
 git pull
 ./install.sh
 ```
-The installer installs a new mod release (and the Northstar version the official installer pins) when there is one, and removes files the old version used that the new one doesn't. To rebuild from scratch, use `./install.sh --force`.
-
-Proton-TF2VR is a frozen copy, so Steam updates can't break the audio fix. To rebuild it from a newer Proton Experimental, run `./install.sh --refresh-proton`. If the new build's `mmdevapi.dll` doesn't match the fix, the script refuses rather than guessing. In that case keep the old copy and open an issue.
 
 ## Uninstall
 
-1. Switch Titanfall 2 back to your previous Proton in Steam (Properties → Compatibility).
-2. Run `./install.sh --uninstall`.
+Switch Titanfall 2 back to your old Proton in Steam (Properties → Compatibility), then run `./install.sh --uninstall`. Your VR campaign saves are kept.
 
-This removes:
-- the mod files it installed
-- the launcher and the app menu entry
-- Proton-TF2VR
+## If something goes wrong
 
-It keeps your VR campaign saves (in the Wine prefix) and the logs in `Titanfall2/TF2VR/`. The newer VC++ runtime stays in the prefix; it's harmless.
-
-## Troubleshooting
-
-### Logs
-
-| What | Where |
+| What you see | What to do |
 |---|---|
-| Launcher output | `~/.local/state/tf2vr/launch.log` |
-| Mod startup stages | `Titanfall2/TF2VR/plugins/Titanfall2VR-data/engine.txt` |
-| Northstar log | `Titanfall2/TF2VR/logs/nslog*.txt` |
-| Crash monitor (exit codes) | `Titanfall2/TF2VR/crashes/<session>/monitor.txt` |
-| Proton log | run `tf2vr --proton-log` → `~/.local/state/tf2vr/steam-1237970.log` |
+| The game starts flat | You used Steam's Play button. Start VR with `tf2vr`. |
+| `tf2vr: command not found` | Run `~/.local/bin/tf2vr`, or [add `~/.local/bin` to your PATH](#arch-cachyos-and-other-arch-based-distros). |
+| `install.sh` prints `FAIL` | Install what it names, then run `./install.sh` again. |
+| The game says you're logged out of Origin, then quits | [Update](#update) to the latest scripts. If the EA app's window asks you to sign in, do. ([why](#why-does-the-launcher-manage-the-ea-app)) |
+| Crash with code `0xC0000409` (3221226505) | Check Titanfall 2 is set to Proton-TF2VR in Steam, then run `./install.sh --refresh-proton`. ([why](#why-does-it-need-its-own-copy-of-proton)) |
+| Crash in `MSVCP140.dll` right after the mod loads | Run `./install.sh` again. ([why](#why-does-it-install-a-newer-vc-runtime)) |
+| `install.sh`: `couldn't install the VC++ runtime` | Install `cabextract` and run `./install.sh` again, or run `protontricks 1237970 vcrun2022`. |
+| `engine.txt` stops at `stage=openxr_instance` | Start SteamVR (or WiVRn / Monado), check the headset is detected, and check it's set as the OpenXR runtime. |
+| The game runs, but the headset shows nothing | VR needs DXVK. Check `vulkaninfo --summary` shows Vulkan 1.3. ([why](#why-does-the-launcher-ignore-some-of-my-settings)) |
+| A small white EA box stays on screen, or `install.sh` says the EA app is running | Run `tf2vr` once; it clears what older versions left behind. ([why](#why-does-the-launcher-manage-the-ea-app)) |
+| `Another mod replaced DirectX files` | Remove `dxgi.dll` and `d3d11.dll` (ReShade and similar) from the game folder. |
+| `write dump: Invalid parameter` | Harmless; look for the real cause in the logs below. ([why](#what-does-write-dump-invalid-parameter-mean)) |
+| Steam isn't found | Run `STEAM_DIR=/path/to/Steam ./install.sh`. |
+| `Proton's Wine can't run directly on this system` | You're on an ARM device. ([see here](#can-i-play-on-a-steam-frame-or-other-arm-device)) |
 
-`Titanfall2/` means `<Steam library>/steamapps/common/Titanfall2`.
+**Still stuck?** [Open an issue](https://github.com/Monkellie/tf2vr-linux/issues) with these files. Collect them after the game has closed, or they'll be cut off:
+- `~/.local/state/tf2vr/launch.log`
+- `Titanfall2/TF2VR/plugins/Titanfall2VR-data/engine.txt`
+- the newest `Titanfall2/TF2VR/logs/nslog*.txt`
+- the newest folder in `Titanfall2/TF2VR/crashes/`
 
-### Common problems
+`Titanfall2/` is `<Steam library>/steamapps/common/Titanfall2`. For a Proton log as well, launch with `tf2vr --proton-log`; it's saved to `~/.local/state/tf2vr/steam-1237970.log`.
 
-| Symptom | Cause / fix |
-|---|---|
-| The game starts flat (normal Titanfall 2) | You started it with Steam's Play button, which always starts the flat game. Start VR with `tf2vr` instead. If `tf2vr` doesn't exist, `install.sh` stopped before the end: run it again and read the error. |
-| `install.sh`: `couldn't install the VC++ runtime` | Microsoft's installer did nothing under Wine, and neither `cabextract` nor `bsdtar` was available for the fallback. Make sure you're on the latest scripts (`git pull`), install `cabextract` (e.g. `sudo apt install cabextract`), then run `./install.sh` again. Alternatively: `protontricks 1237970 vcrun2022`, then `./install.sh`. |
-| `install.sh`: `Proton's Wine can't run directly on this system` | These scripts start Proton outside Steam, which needs an x86_64 Linux PC. On a Steam Frame or other ARM device, see [Steam Frame and other ARM devices](#steam-frame-and-other-arm-devices). |
-| Northstar log: `EXCEPTION_ACCESS_VIOLATION … At: MSVCP140.dll + 0x13028`, and `engine.txt` stops at `stage=openxr_instance` | The VC++ runtime in the prefix is too old. Re-run `./install.sh`, which updates it. |
-| Crash with exit code `0xC0000409` (3221226505) after the menu starts loading | The audio fix isn't active. Check Titanfall 2 is set to **Proton-TF2VR** in Steam, then run `./install.sh --refresh-proton`. |
-| `engine.txt` shows `stage=openxr_instance` and nothing after, with no MSVCP140 crash | The OpenXR runtime isn't reachable. Make sure SteamVR (or WiVRn/Monado) is running, the headset is detected, and it's set as the active OpenXR runtime. |
-| Launch hangs; the Northstar log mentions `LSX: connect()` or Origin | The EA app isn't signed in. Launch Titanfall 2 normally from Steam once, sign in, quit, and try again. |
-| The game reaches the main menu, says you're logged out of Origin, and quits (exit code 274) | The EA app signed in after the game had already checked. Older launchers waited a fixed 8 seconds, and a leftover `backgroundservice.ini` from the previous session could hold up the EA app's sign-in by 20 seconds. Update (`git pull`, `./install.sh`); `tf2vr` now removes that file and waits for the sign-in. If it says `couldn't confirm the EA app signed in`, sign in in the EA app's window. |
-| `monitor.txt` ends with `monitor_error=write dump: Invalid parameter.` | Harmless. The crash monitor tries to save a dump of the game after it has already exited, which Wine refuses. Look at the `process_exit … code=` line above it and the Northstar log for the actual reason. |
-| `install.sh` says Titanfall 2 or the EA app is running, or a small white EA box stays on screen after the game closed | Quit the game. Wine processes left from an earlier session can outlive `wineserver -k` (see [why](#why-these-fixes-are-needed), item 5); running `tf2vr` once clears them. Otherwise run `WINEPREFIX=<library>/steamapps/compatdata/1237970/pfx ~/.local/share/Steam/compatibilitytools.d/Proton-TF2VR/files/bin/wineserver -k`, and if processes are still left, end the ones whose `WINEPREFIX` is that prefix. |
-| Launcher warns `ignoring PROTON_USE_WINED3D`, or the game runs but nothing appears in the headset | VR needs **DXVK**: Proton's OpenXR bridge passes the game's frames to the headset as DXVK textures, so wined3d can't work, and the launcher ignores `PROTON_USE_WINED3D`. If Titanfall 2 only starts with wined3d, your GPU or driver can't run DXVK, which needs Vulkan 1.3. Check `vulkaninfo --summary`. |
-| You copied CircuitLord's installer over `Titanfall2.exe` to run it in Proton | You don't need to; `install.sh` does the installer's job. Verify the game files in Steam to restore `Titanfall2.exe`, and remove any `PROTON_USE_WINED3D` / `WINEDLLOVERRIDES` launch options you added for it. The installer is a WPF app, which is why it seemed to need wined3d. |
-| `Another mod replaced DirectX files` | Remove `dxgi.dll` / `d3d11.dll` from the game folder (ReShade and similar). They take over the frame presentation that VR rendering needs. |
-| Steam isn't found | Point the installer at it: `STEAM_DIR=/path/to/Steam ./install.sh`. Flatpak Steam lives at `~/.var/app/com.valvesoftware.Steam/.local/share/Steam`, but it's untested. |
+## FAQ
 
-## Why these fixes are needed
+### What does `install.sh` actually do?
 
-1. **The installer is Windows-only.** `install.sh` follows `Titanfall2Installer.cs` from the official installer step by step:
-   - It reads the current mod release from `manifest-v3.json`, and the pinned Northstar version from the installer source at the matching commit.
-   - It runs the mod's own `asset_patcher.exe` under Proton, then checks every file it builds against the mod's checksums.
-   - It lays the files out exactly as the official installer does.
-2. **Audio crash (0xC0000409).** The mod captures game audio through `ActivateAudioInterfaceAsync("VAD\Process_Loopback")`, probably for haptics.
-   - Wine rejects that device path, and the mod then fast-fails.
-   - The fix changes one jump in Proton's `mmdevapi.dll` (6 bytes at offset `0x369E`), so the request falls through to the default playback device, where winepulse already supports loopback capture.
-   - **Found and verified by [polar421](https://github.com/polar421/Titanfall-2-VR-linux-fix).** Here it's applied only to a private Proton copy, and only after checking the surrounding bytes match.
-3. **Old VC++ runtime.** The EA app installs `msvcp140.dll` 14.34 into the prefix. `Titanfall2VR.dll` is built with a newer MSVC, and against older runtimes its `std::mutex` use reads a null pointer: a crash in `MSVCP140.dll` right after the plugin loads. Runtime 14.40 or newer fixes it, which is what an up-to-date Windows PC would have.
-4. **Proton's VR bridge.** Proton's `steam.exe` helper only writes the OpenXR/Vulkan data that `wineopenxr` needs (`HKCU\Software\Wine\VR`) for processes it thinks Steam started. The launcher sets `SteamGameId=1237970` so the bridge gets set up.
-5. **EA app keeps the session alive.** `proton run` doesn't return while the EA app is open, and Steam keeps showing Titanfall 2 as running. The launcher follows `crash_monitor.exe` instead, reads the game's exit code from it, and then closes the EA app and the Wine session. With the kernel's ntsync driver, Wine processes that are waiting when the wineserver exits never wake up again (one of them is `explorer.exe`, whose tray window keeps showing the EA icon), so the launcher ends whatever outlived the wineserver. A session ended this way leaves the EA app's `backgroundservice.ini` behind. If the next background service gets the same Wine process ID, the EA app trusts the stale port in that file and signs in 20 seconds late, after Titanfall 2 has already decided you're logged out. So the launcher deletes the file before starting the EA app and starts the game only once the EA app's log shows the sign-in.
+It follows the official installer (`Titanfall2Installer.cs`) step by step:
+- It reads the current mod release from CircuitLord's `manifest-v3.json`, and the Northstar version the official installer pins at that release.
+- It downloads both and checks their SHA-256 checksums.
+- It runs the mod's own `asset_patcher.exe` under Proton, which builds the mod's game assets from your game files, then checks every file it built.
+- It lays the files out the same way: Northstar and the mod in `Titanfall2/TF2VR`, and `Titanfall2VRLauncher.exe` next to the game. `Titanfall2.exe` is never touched.
+
+On top of that, it:
+- copies Proton Experimental to `compatibilitytools.d/Proton-TF2VR` and applies the audio fix to that copy only
+- installs Microsoft's current VC++ runtime into the Titanfall 2 prefix, if the one there is too old
+- adds the `tf2vr` command in `~/.local/bin` and the Titanfall 2 VR app-menu entry
+
+`./install.sh --check` runs only the checks and changes nothing. When you update, it installs a new mod release if there is one, and removes files the old version used that the new one doesn't. `./install.sh --force` reinstalls from scratch.
+
+### Why does it need its own copy of Proton?
+
+For the audio fix. The mod captures game audio through `ActivateAudioInterfaceAsync("VAD\Process_Loopback")`, probably for haptics. Wine rejects that device, and the mod then crashes with `0xC0000409`. [polar421](https://github.com/polar421/Titanfall-2-VR-linux-fix) found that changing one jump in Proton's `mmdevapi.dll` (6 bytes at offset `0x369E`) sends the request to the default playback device instead, where Wine's PulseAudio driver already supports loopback capture.
+
+The fix goes into the private copy only, after checking the surrounding bytes match, so your other games are untouched. The copy is frozen, so Steam updates can't break it. To rebuild it from a newer Proton Experimental, run `./install.sh --refresh-proton`. If the new `mmdevapi.dll` doesn't match the fix, the script refuses rather than guessing; keep the old copy and open an issue.
+
+Steam has to be set to Proton-TF2VR as well, because normal and VR launches share one Wine prefix, and switching Wine versions on a prefix breaks things.
+
+### Why does it install a newer VC++ runtime?
+
+The EA app installs `msvcp140.dll` 14.34 into the prefix. The mod is built with a newer compiler, and with that older runtime its `std::mutex` use reads a null pointer, so it crashes in `MSVCP140.dll` right after loading. Runtime 14.40 or newer fixes it, which is what an up-to-date Windows PC has.
+
+Microsoft's installer sometimes does nothing under Wine. Then `install.sh` copies the DLLs out of it with `cabextract` or `bsdtar`, the way winetricks does. The runtime stays in the prefix after you uninstall; it's harmless.
+
+### Why can't Steam's Play button start VR?
+
+Steam always starts `Titanfall2.exe`, the normal game. Setting Proton-TF2VR in Steam only picks the Proton build. The VR mod starts through Northstar's launcher instead, the way the official installer's Play button does it. `tf2vr` does exactly that: `crash_monitor.exe` starts `Titanfall2VRLauncher.exe` with the TF2VR profile and the arguments from the mod's `launch.json`.
+
+The launcher also sets `SteamGameId=1237970`. Proton's `steam.exe` only sets up its VR bridge (the OpenXR and Vulkan data `wineopenxr` reads from `HKCU\Software\Wine\VR`) for programs it thinks Steam started.
+
+Copying CircuitLord's installer over `Titanfall2.exe` to run it in Proton is a dead end, and you don't need it: `install.sh` does the installer's job. Verify the game files in Steam to get `Titanfall2.exe` back, and remove any `PROTON_USE_WINED3D` or `WINEDLLOVERRIDES` launch options you added for it.
+
+### Why does the launcher manage the EA app?
+
+Titanfall 2 needs a signed-in EA app, and it checks the sign-in once, when it starts. So the launcher:
+- **Starts the EA app and waits until it's signed in**, then starts the game. Older versions waited a fixed 8 seconds. When the EA app took longer, the game decided you were logged out of Origin and quit (exit code 274).
+- **Deletes the EA app's `backgroundservice.ini` first.** A session that was ended by force leaves this file behind. If the next EA background service happens to get the same Wine process ID, the EA app trusts the old port in the file and signs in 20 seconds late.
+- **Closes the EA app and its Wine session when you quit.** `proton run` doesn't return while the EA app is open, and Steam keeps showing Titanfall 2 as running. So the launcher follows `crash_monitor.exe` instead, reports the game's exit code, and then ends the session.
+- **Cleans up after Wine.** With the kernel's ntsync driver, which Proton 11 uses whenever `/dev/ntsync` exists, Wine processes that are waiting when the wineserver exits never wake up again. One of them is `explorer.exe`, whose tray window keeps showing the EA icon: the white box. The launcher ends whatever outlives the wineserver, after each session and before the next launch.
+
+### Why does the launcher ignore some of my settings?
+
+The launcher doesn't go through Steam, so Steam launch options don't apply, but variables you set globally (for example in `/etc/environment` or `~/.config/environment.d`) do. It removes these, with a warning:
+- `PROTON_USE_WINED3D`: VR needs DXVK. Proton's OpenXR bridge hands the game's frames to the headset as DXVK textures, so with wined3d the headset shows nothing. If Titanfall 2 only starts with wined3d, your GPU or driver can't run DXVK, which needs Vulkan 1.3.
+- `PROTON_ENABLE_WAYLAND`: the EA app and VR are only tested with Wine's X11 driver.
+- `MANGOHUD`: overlays aren't tested with the EA app and VR.
+
+### Arch, CachyOS and other Arch-based distros
+
+- **`~/.local/bin` isn't on your PATH by default**, so a plain `tf2vr` isn't found. Use the app-menu entry, run `~/.local/bin/tf2vr`, or add it to your PATH: `export PATH="$HOME/.local/bin:$PATH"` in `~/.bashrc` or `~/.zshrc`, or `fish_add_path ~/.local/bin` in fish.
+- **`python` and `unzip` aren't part of a minimal install:** `sudo pacman -S --needed python unzip cabextract`.
+- **A few libraries come from your system**, because the scripts run Proton directly rather than inside Steam's runtime: `gnutls` (the EA app needs it to sign in), `vulkan-icd-loader`, `libx11` and `libpulse`. `install.sh` checks for them.
+- **The audio fix needs a PulseAudio-compatible sound server.** With PipeWire, install `pipewire-pulse`.
+- **Arch and CachyOS kernels ship ntsync**, which made older versions of these scripts leave hung Wine processes behind after you quit. [Update](#update) to the latest scripts.
+
+### Can I play on a Steam Frame or other ARM device?
+
+Not on the headset itself. A standalone Steam Frame is an ARM device, so it runs x86 games through FEX emulation inside Steam's own runtime. These scripts start Proton's x86 Wine directly, outside Steam, which can't work there. `install.sh` stops with "Proton's Wine can't run directly on this system" before changing anything.
+
+**Instead, run the game on a PC and stream it to the headset:**
+- **From an x86_64 Linux PC:** follow [Install](#install) on the PC and make SteamVR the active OpenXR runtime. Connect the headset to the PC's SteamVR through Steam's PC VR streaming (on the Frame, with its wireless adapter). Then start SteamVR on the PC and run `tf2vr`.
+- **From a Windows PC:** you don't need these scripts. Use [CircuitLord's official installer](https://github.com/CircuitLord/CircuitLordVRModInstaller), connect the headset to SteamVR, and press Play in the installer.
+
+Streaming a Steam Frame to Linux SteamVR hasn't been tested with these scripts yet. Linux SteamVR ships the Frame's headset and controller profiles and the Steam Link streaming driver, so it should work like any other SteamVR headset. Reports welcome.
+
+### Which headsets and distros work?
+
+Tested on PikaOS (Debian sid) on Wayland, with an NVIDIA GPU, a Valve Index, SteamVR 2.17.10, Proton Experimental 11.0 (2026-09-24), mod 1.0.10 and Northstar 1.31.13. The main menu and the campaign run in VR with tracked controllers and audio.
+
+- **Other headsets:** polar421 has played the campaign on a Quest 3S through WiVRn with a similar setup. With these scripts, a tethered WiVRn user has got as far as the mod finding the headset and controllers.
+- **Other distros:** anything x86_64 that runs Steam should work; see the [Arch notes](#arch-cachyos-and-other-arch-based-distros). SteamOS on x86 and Flatpak Steam (`~/.var/app/com.valvesoftware.Steam/.local/share/Steam`) are untested.
+- **Two GPUs:** the game has to render on a GPU that has a monitor attached, and it has to be the same GPU your VR runtime uses.
+
+Reports welcome.
+
+### What does `write dump: Invalid parameter` mean?
+
+Nothing on its own. When the game quits with an error, `crash_monitor.exe` tries to save a memory dump of it, but the game has already exited, and Wine refuses. Look at the `process_exit … code=` line above it in `monitor.txt`, and at the Northstar log, for the real reason.
 
 ## Credits
 
 - **[CircuitLord](https://github.com/CircuitLord/CircuitLordVRModInstaller)** for the Titanfall 2 VR mod and its installer (MIT). Everything here follows that installer.
-- **[polar421](https://github.com/polar421/Titanfall-2-VR-linux-fix)** for getting the mod running on Proton first and finding the `mmdevapi.dll` audio fix.
+- **[polar421](https://github.com/polar421/Titanfall-2-VR-linux-fix)** for getting the mod running on Proton first, and for finding the `mmdevapi.dll` audio fix.
 - **[Northstar](https://github.com/R2Northstar/Northstar)**, the mod loader the VR mod runs on.
 
 This is a community project. It isn't affiliated with or endorsed by Respawn, EA, Valve or CircuitLord.
 
 ## License
 
-[MIT](LICENSE). You can use, copy, modify, share and sell it freely; just keep the license notice. The mod, Northstar and the game have their own licenses and aren't included here.
+[MIT](LICENSE): use, copy, modify, share and sell it freely, as long as you keep the license notice. The mod, Northstar and the game have their own licenses and aren't included here.

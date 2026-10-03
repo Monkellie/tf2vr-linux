@@ -27,6 +27,7 @@ STATE="${XDG_DATA_HOME:-$HOME/.local/share}/tf2vr"
 CONF="${XDG_CONFIG_HOME:-$HOME/.config}/tf2vr/paths.env"
 CACHE="${XDG_CACHE_HOME:-$HOME/.cache}/tf2vr"
 
+RUN_CMD=tf2vr
 MODE=install
 FORCE=0
 REFRESH_PROTON=0
@@ -130,6 +131,24 @@ PY
 }
 
 # ------------------------------------------------------------ preflight --
+# Proton runs outside Steam's runtime here, so these libraries come from the system.
+# Skipped where there's no ldconfig cache to ask.
+host_libs() {
+  local lc missing=0 entry lib level why
+  lc=$(command -v ldconfig || echo /sbin/ldconfig)
+  [ -x "$lc" ] || return 0
+  for entry in "libgnutls.so.30|fail|gnutls - the EA app needs it to sign in" \
+               "libvulkan.so.1|fail|the Vulkan loader (Arch: vulkan-icd-loader) - DXVK and VR need it" \
+               "libX11.so.6|fail|libx11 - Wine needs it to open windows" \
+               "libpulse.so.0|warn|libpulse - the audio fix goes through Wine's PulseAudio driver"; do
+    IFS='|' read -r lib level why <<<"$entry"
+    "$lc" -p 2>/dev/null | awk -v l="$lib" '$1 == l && /x86-64/ { f = 1 } END { exit !f }' && continue
+    "$level" "$lib isn't installed: install $why"
+    missing=1
+  done
+  [ "$missing" = 1 ] || ok "system libraries Proton needs (gnutls, Vulkan, X11, PulseAudio)"
+}
+
 preflight() {
   echo "Preflight:"
   local t
@@ -141,7 +160,14 @@ preflight() {
   else warn "neither cabextract nor bsdtar is installed - only needed if the VC++ runtime installer fails under Wine"
   fi
 
-  [ "$(uname -m)" = x86_64 ] || warn "This system is $(uname -m). These scripts run Proton's x86_64 Wine directly, which only works on x86_64 PCs (see \"Steam Frame and other ARM devices\" in the README)."
+  [ "$(uname -m)" = x86_64 ] || warn "This system is $(uname -m). These scripts run Proton's x86_64 Wine directly, which only works on x86_64 PCs (see \"Can I play on a Steam Frame or other ARM device?\" in the README)."
+  host_libs
+
+  if [ -n "${PULSE_SERVER:-}" ] || [ -S "${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/pulse/native" ]; then
+    ok "PulseAudio-compatible sound server running"
+  else
+    warn "No PulseAudio-compatible sound server is running; the audio fix needs one (with PipeWire, install pipewire-pulse)"
+  fi
   if [ -z "$STEAM" ]; then
     fail "Steam not found (set STEAM_DIR=/path/to/Steam)"
     return
@@ -335,7 +361,7 @@ check_wine_runs() {
   die "Proton's Wine can't run directly on this system ($(uname -m)): $("$TOOL/files/bin/wine" --version 2>&1 | head -n 1)
 These scripts start Proton outside Steam, which only works on x86_64 Linux PCs. Nothing has been
 installed into the game yet. On a Steam Frame or other ARM headset, run the game on a PC and stream it
-instead: see "Steam Frame and other ARM devices" in the README."
+instead: see "Can I play on a Steam Frame or other ARM device?" in the README."
 }
 
 # ------------------------------------------------------------ the mod --
@@ -490,7 +516,8 @@ install_launcher() {
 
   case ":$PATH:" in
     *":$BIN:"*) ;;
-    *) warn "$BIN is not on your PATH - run it as $BIN/tf2vr or add it to PATH" ;;
+    *) RUN_CMD="$BIN/tf2vr"
+       warn "$BIN isn't on your PATH (Arch doesn't add it by default), so plain 'tf2vr' won't be found: run $RUN_CMD, or add $BIN to PATH" ;;
   esac
 }
 
@@ -547,7 +574,7 @@ if [ "$fails" -gt 0 ]; then
 fi
 echo "Done ($warns warning(s))."
 if [ "$MODE" = install ]; then
-  echo "Start your headset's OpenXR runtime (e.g. SteamVR), then run:  tf2vr   (or 'Titanfall 2 VR' in your app menu)"
+  echo "Start your headset's OpenXR runtime (e.g. SteamVR), then run:  $RUN_CMD   (or 'Titanfall 2 VR' in your app menu)"
   echo "Steam's Play button keeps starting the normal, flat game."
 fi
 exit 0

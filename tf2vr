@@ -80,13 +80,18 @@ done < <(compgen -e)
 unset XR_RUNTIME_JSON VR_PATHREG_OVERRIDE VR_CONFIG_PATH VR_LOG_PATH
 export TF2VR_OPENXR=1
 
+# Settings often set globally for other games that this setup can't use or isn't tested with.
 # VR needs DXVK: wineopenxr hands the game's D3D11 frames to the headset as DXVK textures,
-# so wined3d (often set globally for other games) leaves the headset with nothing to show
-for v in PROTON_USE_WINED3D PROTON_USE_WINED3D11; do
-  if [ -n "${!v+x}" ]; then
-    [ "${!v}" != 0 ] && echo "WARNING: ignoring $v=${!v} - VR needs DXVK, wined3d can't send frames to the headset."
-    unset "$v"
-  fi
+# so wined3d leaves the headset with nothing to show.
+for v in PROTON_USE_WINED3D PROTON_USE_WINED3D11 PROTON_ENABLE_WAYLAND MANGOHUD; do
+  [ -n "${!v+x}" ] || continue
+  case "$v" in
+    PROTON_USE_WINED3D*)   why="VR needs DXVK, wined3d can't send frames to the headset" ;;
+    PROTON_ENABLE_WAYLAND) why="the EA app and VR are only tested with Wine's X11 driver" ;;
+    MANGOHUD)              why="overlays aren't tested with the EA app and VR" ;;
+  esac
+  [ "${!v}" != 0 ] && echo "WARNING: ignoring $v=${!v} - $why."
+  unset "$v"
 done
 export STEAM_COMPAT_CLIENT_INSTALL_PATH="$STEAM_ROOT"
 export STEAM_COMPAT_DATA_PATH="$PREFIX_DIR"
