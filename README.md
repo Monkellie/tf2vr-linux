@@ -7,7 +7,7 @@ Play [CircuitLord's Titanfall 2 VR mod](https://github.com/CircuitLord/CircuitLo
 
 ## What you need
 
-- An **x86_64** Linux PC. A standalone Steam Frame or other ARM device can't run this ([why](#can-i-play-on-a-steam-frame-or-other-arm-device)).
+- An **x86_64** Linux PC with a current distro (glibc 2.38 or newer, [details](#which-headsets-and-distros-work)). A standalone Steam Frame or other ARM device can't run this ([why](#can-i-play-on-a-steam-frame-or-other-arm-device)).
 - **Titanfall 2 on Steam**
 - **Proton Experimental**, installed in Steam: Library → search "Proton Experimental" → Install
 - A **VR runtime**: SteamVR (Settings → OpenXR → "Set SteamVR as OpenXR runtime"), or WiVRn / Monado
@@ -67,6 +67,7 @@ Switch Titanfall 2 back to your old Proton in Steam (Properties → Compatibilit
 | `write dump: Invalid parameter` | Harmless; look for the real cause in the logs below. ([why](#what-does-write-dump-invalid-parameter-mean)) |
 | Steam isn't found | Run `STEAM_DIR=/path/to/Steam ./install.sh`. |
 | `Proton's Wine can't run directly on this system` | You're on an ARM device. ([see here](#can-i-play-on-a-steam-frame-or-other-arm-device)) |
+| `install.sh`: `glibc … is too old` | Your distro release is too old for the current Proton. Upgrade to one with glibc 2.38 or newer. ([which ones](#which-headsets-and-distros-work)) |
 
 **Still stuck?** [Open an issue](https://github.com/Monkellie/tf2vr-linux/issues) with these files. Collect them after the game has closed, or they'll be cut off:
 - `~/.local/state/tf2vr/launch.log`
@@ -153,7 +154,8 @@ Streaming a Steam Frame to Linux SteamVR hasn't been tested with these scripts y
 Tested on PikaOS (Debian sid) on Wayland, with an NVIDIA GPU, a Valve Index, SteamVR 2.17.10, Proton Experimental 11.0 (2026-09-24), mod 1.0.10 and Northstar 1.31.13. The main menu and the campaign run in VR with tracked controllers and audio.
 
 - **Other headsets:** polar421 has played the campaign on a Quest 3S through WiVRn with a similar setup. With these scripts, a tethered WiVRn user has got as far as the mod finding the headset and controllers.
-- **Other distros:** anything x86_64 that runs Steam should work; see the [Arch notes](#arch-cachyos-and-other-arch-based-distros). SteamOS on x86 and Flatpak Steam (`~/.var/app/com.valvesoftware.Steam/.local/share/Steam`) are untested.
+- **Other distros:** anything x86_64 with **glibc 2.38 or newer** should work: Ubuntu 24.04+, Linux Mint 22+, Pop!_OS 24.04+, Debian 13+, Fedora 39+, and current Arch and its derivatives (see the [Arch notes](#arch-cachyos-and-other-arch-based-distros)). Steam runs Proton inside its own runtime, which brings a newer glibc, but these scripts run Proton outside it, so your system's glibc has to be new enough. Ubuntu 22.04, Mint 21 and Pop!_OS 22.04 (2.35) and Debian 12 (2.36) are too old. `install.sh` checks this.
+- **Untested:** SteamOS on x86, and Flatpak Steam (`~/.var/app/com.valvesoftware.Steam/.local/share/Steam`).
 - **Two GPUs:** the game has to render on a GPU that has a monitor attached, and it has to be the same GPU your VR runtime uses.
 
 Reports welcome.

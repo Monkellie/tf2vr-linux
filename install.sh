@@ -149,6 +149,23 @@ host_libs() {
   [ "$missing" = 1 ] || ok "system libraries Proton needs (gnutls, Vulkan, X11, PulseAudio)"
 }
 
+# Proton is built for Steam's runtime, which brings its own glibc. Run outside it, as here, it uses
+# the system's, and on an older one Wine's X11 driver and the OpenXR loader refuse to load.
+glibc_check() {
+  local dir need have
+  if [ -f "$PROTON" ]; then dir=$TOOL; else dir=${EXPERIMENTAL:-}; fi
+  [ -n "$dir" ] && [ -f "$dir/files/lib/wine/x86_64-unix/winex11.so" ] || return 0
+  need=$(grep -aoE 'GLIBC_2\.[0-9]+' "$dir/files/lib/wine/x86_64-unix/winex11.so" | sort -uV | tail -n 1 || true)
+  need=${need#GLIBC_}
+  have=$(getconf GNU_LIBC_VERSION 2>/dev/null | awk '{ print $2 }' || true)
+  [ -n "$need" ] && [ -n "$have" ] || return 0
+  if [ "$(printf '%s\n%s\n' "$need" "$have" | sort -V | head -n 1)" = "$need" ]; then
+    ok "glibc $have (Proton needs $need)"
+  else
+    fail "glibc $have is too old: Proton $(cut -d' ' -f2 "$dir/version") needs $need or newer outside Steam (Ubuntu 22.04, Mint 21 and Pop!_OS 22.04 have 2.35, Debian 12 has 2.36). A newer distro release is needed, e.g. Ubuntu 24.04, Mint 22 or Debian 13."
+  fi
+}
+
 preflight() {
   echo "Preflight:"
   local t
@@ -198,6 +215,7 @@ preflight() {
   else
     fail "Proton Experimental not installed (Steam -> Library -> search 'Proton Experimental' -> Install)"
   fi
+  glibc_check
 
   local tool
   tool=$(steam_compat_tool)
