@@ -94,6 +94,39 @@ export STEAM_COMPAT_DATA_PATH="$PREFIX_DIR"
 # for processes it thinks Steam launched; without these xrCreateInstance crashes the mod.
 export SteamGameId=1237970 SteamAppId=1237970
 
+# Wine processes of this prefix: their binaries live in Proton's files/ (unlike this script, tee
+# and the python proton script), and Proton gives them WINEPREFIX
+PROTON_FILES="$(readlink -f "$(dirname "$PROTON_BIN")")/files/"
+PFX_CANON=$(readlink -f "$PREFIX_DIR/pfx")
+prefix_pids() {
+  local p t exe
+  for p in /proc/[0-9]*; do
+    t=$p
+    # When the main thread has exited (xalia.exe does) only the other threads can be read
+    if ! exe=$(readlink "$p/exe" 2>/dev/null); then
+      for t in "$p"/task/*; do exe=$(readlink "$t/exe" 2>/dev/null) && break; done
+    fi
+    case "$exe" in "$PROTON_FILES"*) ;; *) continue ;; esac
+    grep -qzxF -e "WINEPREFIX=$PREFIX_DIR/pfx" -e "WINEPREFIX=$PREFIX_DIR/pfx/" \
+      -e "WINEPREFIX=$PFX_CANON" -e "WINEPREFIX=$PFX_CANON/" "$t/environ" 2>/dev/null && echo "${p#/proc/}"
+  done
+}
+# Processes blocked in an ntsync wait outlive their wineserver and then wait forever (explorer.exe
+# among them, which keeps showing the EA tray icon). Without a wineserver nothing in the session
+# can recover, so end them. Returns 0 if it killed something.
+kill_orphans() {
+  local pids p
+  pids=$(prefix_pids)
+  [ -n "$pids" ] || return 1
+  for p in $pids; do
+    [ "$(basename "$(readlink "/proc/$p/exe" 2>/dev/null)")" = wineserver ] && return 1
+  done
+  # shellcheck disable=SC2086
+  kill -KILL $pids 2>/dev/null
+  return 0
+}
+kill_orphans && echo "Closed Wine processes left over from an earlier session."
+
 # Northstar needs a signed-in EA app; start it first so the launcher doesn't hang at "LSX: connect()".
 # EA's process name is CrBrowserMain, so match argv[0] instead (from polar421's launcher).
 # "EA Desktop\EA Desktop" is the EA app's link to its current version folder; Wine resolves it.
@@ -107,12 +140,35 @@ ea_running() {
   done
   return 1
 }
+EA_DATA="$PREFIX_DIR/pfx/drive_c/ProgramData/EA Desktop"
+ea_signed_in() {
+  local size
+  size=$(stat -c %s "$EA_DATA/Logs/EADesktop.log" 2>/dev/null) || return 1
+  [ "$size" -ge "$ea_log_start" ] || ea_log_start=0
+  grep -q onAuthSuccessUpdated < <(tail -c +$((ea_log_start + 1)) "$EA_DATA/Logs/EADesktop.log")
+}
 if ! ea_running; then
+  # The EA app finds its background service through this file. A killed session leaves it behind,
+  # and when the new service gets the old one's Wine PID, the EA app dials the dead port for 20 s,
+  # signs in late, and the game, which checks the login once at startup, says you're logged out.
+  rm -f "$EA_DATA/backgroundservice.ini"
+  ea_log_start=$(stat -c %s "$EA_DATA/Logs/EADesktop.log" 2>/dev/null || echo 0)
   echo "Starting the EA app..."
   "$PROTON_BIN" run "$EA_EXE" >/dev/null 2>&1 &
   for _ in $(seq 1 45); do ea_running && break; sleep 1; done
   ea_running || die "The EA app didn't start. Launch Titanfall 2 normally from Steam once to check you're signed in."
-  sleep 8
+  signed_in=0
+  for i in $(seq 1 180); do
+    ea_signed_in && { signed_in=1; break; }
+    [ "$i" = 15 ] && echo "Waiting for the EA app to sign in - if its window asks, sign in there."
+    sleep 1
+  done
+  if [ "$signed_in" = 1 ]; then
+    echo "EA app signed in."
+    sleep 2
+  else
+    echo "WARNING: couldn't confirm the EA app signed in. If the game says you're logged out, sign in to the EA app and launch again."
+  fi
 fi
 
 # Arguments from the mod's launch.json, filled in the way the Windows installer does
@@ -142,8 +198,13 @@ rc=$(sed -n 's/.*process_exit pid=[0-9]* code=\([0-9-]*\).*/\1/p' "$session/moni
 echo "Game exited with code ${rc:-unknown}"
 
 # Close the EA app and the rest of the Wine session too; while it runs, Steam still
-# shows Titanfall 2 as running and won't start it normally.
+# shows Titanfall 2 as running and won't start it normally. Then end what outlived the wineserver.
 WINEPREFIX="$PREFIX_DIR/pfx" "$(dirname "$PROTON_BIN")/files/bin/wineserver" -k 2>/dev/null
+for _ in $(seq 1 10); do
+  [ -z "$(prefix_pids)" ] && break
+  kill_orphans && break
+  sleep 0.5
+done
 wait "$proton_pid" 2>/dev/null
 
 [ -n "$PROTON_LOG_FILE" ] && echo "Proton log saved to $PROTON_LOG_FILE"
