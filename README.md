@@ -65,6 +65,7 @@ Switch Titanfall 2 back to your old Proton in Steam (Properties → Compatibilit
 | A small white EA box stays on screen, or `install.sh` says the EA app is running | Run `tf2vr` once; it clears what older versions left behind. ([why](#why-does-the-launcher-manage-the-ea-app)) |
 | `Another mod replaced DirectX files` | Remove `dxgi.dll` and `d3d11.dll` (ReShade and similar) from the game folder. |
 | `write dump: Invalid parameter` | Harmless; look for the real cause in the logs below. ([why](#what-does-write-dump-invalid-parameter-mean)) |
+| Discord shows SteamVR instead of Titanfall 2 | [Update](#update) to the latest scripts. ([why](#why-does-discord-show-steamvr-instead-of-titanfall-2)) |
 | Steam isn't found | Run `STEAM_DIR=/path/to/Steam ./install.sh`. |
 | `Proton's Wine can't run directly on this system` | You're on an ARM device. ([see here](#can-i-play-on-a-steam-frame-or-other-arm-device)) |
 | `install.sh`: `glibc … is too old` | Your distro release is too old for the current Proton. Upgrade to one with glibc 2.38 or newer. ([which ones](#which-headsets-and-distros-work)) |
@@ -91,6 +92,7 @@ On top of that, it:
 - copies Proton Experimental to `compatibilitytools.d/Proton-TF2VR` and applies the audio fix to that copy only
 - installs Microsoft's current VC++ runtime into the Titanfall 2 prefix, if the one there is too old
 - adds the `tf2vr` command in `~/.local/bin` and the Titanfall 2 VR app-menu entry
+- adds `~/.local/share/tf2vr/discord-presence.py`, which the launcher uses to set your [Discord status](#why-does-discord-show-steamvr-instead-of-titanfall-2)
 
 `./install.sh --check` runs only the checks and changes nothing. When you update, it installs a new mod release if there is one, and removes files the old version used that the new one doesn't. `./install.sh --force` reinstalls from scratch.
 
@@ -130,6 +132,14 @@ The launcher doesn't go through Steam, so Steam launch options don't apply, but 
 - `PROTON_USE_WINED3D`: VR needs DXVK. Proton's OpenXR bridge hands the game's frames to the headset as DXVK textures, so with wined3d the headset shows nothing. If Titanfall 2 only starts with wined3d, your GPU or driver can't run DXVK, which needs Vulkan 1.3.
 - `PROTON_ENABLE_WAYLAND`: the EA app and VR are only tested with Wine's X11 driver.
 - `MANGOHUD`: overlays aren't tested with the EA app and VR.
+
+### Why does Discord show SteamVR instead of Titanfall 2?
+
+Discord recognises games by their program name, and it doesn't know `Titanfall2VRLauncher.exe`. So all it detects during a VR session is SteamVR's status window, or `crash_monitor`. The mod's own Discord plugin can't fix that: it looks for Discord on a Windows pipe, and under Wine nothing connects that pipe to Linux Discord. Its `[DSCRD-RPC] waiting for handshake...` line in the nslog never gets an answer.
+
+So the launcher sets your status itself, through Discord's local socket: **Playing Titanfall 2 VR**, with the chapter, difficulty and play time, under Titanfall 2's icon. Discord ranks a status with details like these above apps it only detected, so this one shows instead of SteamVR, for you and for your friends. It works with the Discord app (native, Flatpak or Snap) and with Vesktop, and it clears when the game closes. `launch.log` says `Discord: showing "Playing Titanfall 2 VR"` once it's connected.
+
+SteamVR can still appear as a second activity on your own profile. To remove it completely, turn off its detection in Discord's **Settings → Registered Games**.
 
 ### Arch, CachyOS and other Arch-based distros
 

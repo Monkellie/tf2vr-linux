@@ -517,6 +517,8 @@ install_launcher() {
   echo "Launcher:"
   install -Dm755 "$HERE/tf2vr" "$BIN/tf2vr"
   ok "$BIN/tf2vr"
+  install -Dm644 "$HERE/discord-presence.py" "$STATE/discord-presence.py"
+  ok "$STATE/discord-presence.py (Discord status)"
 
   mkdir -p "$(dirname "$CONF")"
   {

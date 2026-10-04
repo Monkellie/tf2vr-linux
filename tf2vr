@@ -187,6 +187,13 @@ PY
 )
 [ "${#ARGS[@]}" -gt 0 ] || die "Couldn't read $G/TF2VR/tools/launch.json"
 
+PRESENCE="${XDG_DATA_HOME:-$HOME/.local/share}/tf2vr/discord-presence.py"
+presence_pid=""
+if [ -f "$PRESENCE" ]; then
+  python3 "$PRESENCE" "$G/TF2VR/logs" $$ &
+  presence_pid=$!
+fi
+
 echo "Launching Titanfall 2 VR (log: $LOG)"
 cd "$G" || die "can't enter $G"
 "$PROTON_BIN" run "$G/TF2VR/tools/crash_monitor.exe" "$(win "$G/TF2VR")" "$(win "$G/Titanfall2VRLauncher.exe")" "${ARGS[@]}" "$@" &
@@ -196,6 +203,7 @@ proton_pid=$!
 monitor_running() { pgrep -f '^Z:.*crash_monitor\.exe' >/dev/null; }
 for _ in $(seq 1 60); do monitor_running && break; kill -0 "$proton_pid" 2>/dev/null || break; sleep 1; done
 while monitor_running; do sleep 2; done
+[ -n "$presence_pid" ] && kill "$presence_pid" 2>/dev/null
 
 # crash_monitor.exe records how the game ended in its newest session folder
 session=$(ls -1d "$G"/TF2VR/crashes/*/ 2>/dev/null | tail -n 1)
