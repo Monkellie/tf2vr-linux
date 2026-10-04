@@ -196,7 +196,7 @@ fi
 
 echo "Launching Titanfall 2 VR (log: $LOG)"
 cd "$G" || die "can't enter $G"
-"$PROTON_BIN" run "$G/TF2VR/tools/crash_monitor.exe" "$(win "$G/TF2VR")" "$(win "$G/Titanfall2VRLauncher.exe")" "${ARGS[@]}" "$@" &
+ContentId=Origin.OFR.50.0001456 "$PROTON_BIN" run "$G/TF2VR/tools/crash_monitor.exe" "$(win "$G/TF2VR")" "$(win "$G/Titanfall2VRLauncher.exe")" "${ARGS[@]}" "$@" &
 proton_pid=$!
 
 # `proton run` keeps waiting while the EA app is open, so follow crash_monitor.exe instead

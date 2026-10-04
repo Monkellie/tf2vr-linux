@@ -65,6 +65,7 @@ Switch Titanfall 2 back to your old Proton in Steam (Properties → Compatibilit
 | A small white EA box stays on screen, or `install.sh` says the EA app is running | Run `tf2vr` once; it clears what older versions left behind. ([why](#why-does-the-launcher-manage-the-ea-app)) |
 | `Another mod replaced DirectX files` | Remove `dxgi.dll` and `d3d11.dll` (ReShade and similar) from the game folder. |
 | `write dump: Invalid parameter` | Harmless; look for the real cause in the logs below. ([why](#what-does-write-dump-invalid-parameter-mean)) |
+| Achievements don't unlock in VR | [Update](#update) to the latest scripts. ([why](#why-does-the-launcher-manage-the-ea-app)) |
 | Discord shows SteamVR instead of Titanfall 2 | [Update](#update) to the latest scripts. ([why](#why-does-discord-show-steamvr-instead-of-titanfall-2)) |
 | Steam isn't found | Run `STEAM_DIR=/path/to/Steam ./install.sh`. |
 | `Proton's Wine can't run directly on this system` | You're on an ARM device. ([see here](#can-i-play-on-a-steam-frame-or-other-arm-device)) |
@@ -122,6 +123,7 @@ Copying CircuitLord's installer over `Titanfall2.exe` to run it in Proton is a d
 
 Titanfall 2 needs a signed-in EA app, and it checks the sign-in once, when it starts. So the launcher:
 - **Starts the EA app and waits until it's signed in**, then starts the game. Older versions waited a fixed 8 seconds. When the EA app took longer, the game decided you were logged out of Origin and quit (exit code 274).
+- **Tells the game which EA product it is.** When Steam starts Titanfall 2, EA's launcher gives the game `ContentId=Origin.OFR.50.0001456`, the EA offer your Steam copy is linked to. Without it, the game falls back to its built-in ID, the EA app can't match the session to your copy, and it refuses every achievement ("Entitlement not found" in `EADesktopVerbose.log`). The launcher sets the same value. The EA app still checks that you own the game.
 - **Deletes the EA app's `backgroundservice.ini` first.** A session that was ended by force leaves this file behind. If the next EA background service happens to get the same Wine process ID, the EA app trusts the old port in the file and signs in 20 seconds late.
 - **Closes the EA app and its Wine session when you quit.** `proton run` doesn't return while the EA app is open, and Steam keeps showing Titanfall 2 as running. So the launcher follows `crash_monitor.exe` instead, reports the game's exit code, and then ends the session.
 - **Cleans up after Wine.** With the kernel's ntsync driver, which Proton 11 uses whenever `/dev/ntsync` exists, Wine processes that are waiting when the wineserver exits never wake up again. One of them is `explorer.exe`, whose tray window keeps showing the EA icon: the white box. The launcher ends whatever outlives the wineserver, after each session and before the next launch.
