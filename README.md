@@ -65,6 +65,7 @@ Switch Titanfall 2 back to your old Proton in Steam (Properties → Compatibilit
 | A small white EA box stays on screen, or `install.sh` says the EA app is running | Run `tf2vr` once; it clears what older versions left behind. ([why](#why-does-the-launcher-manage-the-ea-app)) |
 | `Another mod replaced DirectX files` | Remove `dxgi.dll` and `d3d11.dll` (ReShade and similar) from the game folder. |
 | `write dump: Invalid parameter` | Harmless; look for the real cause in the logs below. ([why](#what-does-write-dump-invalid-parameter-mean)) |
+| The game closes about a minute after it starts, every time | Happens when your Steam library is on another drive. [Update](#update) to the latest scripts. |
 | Achievements don't unlock in VR | [Update](#update) to the latest scripts. ([why](#why-does-the-launcher-manage-the-ea-app)) |
 | Discord shows SteamVR instead of Titanfall 2 | [Update](#update) to the latest scripts. ([why](#why-does-discord-show-steamvr-instead-of-titanfall-2)) |
 | Steam isn't found | Run `STEAM_DIR=/path/to/Steam ./install.sh`. |

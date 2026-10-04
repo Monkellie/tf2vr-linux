@@ -200,9 +200,26 @@ ContentId=Origin.OFR.50.0001456 "$PROTON_BIN" run "$G/TF2VR/tools/crash_monitor.
 proton_pid=$!
 
 # `proton run` keeps waiting while the EA app is open, so follow crash_monitor.exe instead
-monitor_running() { pgrep -f '^Z:.*crash_monitor\.exe' >/dev/null; }
-for _ in $(seq 1 60); do monitor_running && break; kill -0 "$proton_pid" 2>/dev/null || break; sleep 1; done
-while monitor_running; do sleep 2; done
+monitor_running() {
+  local p a
+  for p in /proc/[0-9]*; do
+    IFS= read -r -d '' a 2>/dev/null < "$p/cmdline" || continue
+    case "$a" in [A-Za-z]:\\*\\crash_monitor.exe) return 0 ;; esac
+  done
+  return 1
+}
+monitor_seen=0
+for _ in $(seq 1 60); do
+  monitor_running && { monitor_seen=1; break; }
+  kill -0 "$proton_pid" 2>/dev/null || break
+  sleep 1
+done
+if [ "$monitor_seen" = 1 ]; then
+  while monitor_running; do sleep 2; done
+elif kill -0 "$proton_pid" 2>/dev/null; then
+  echo "WARNING: couldn't find crash_monitor.exe, so the launcher can't tell when the game ends. After you quit, close the EA app to finish."
+  wait "$proton_pid" 2>/dev/null
+fi
 [ -n "$presence_pid" ] && kill "$presence_pid" 2>/dev/null
 
 # crash_monitor.exe records how the game ended in its newest session folder
