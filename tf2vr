@@ -199,14 +199,95 @@ cd "$G" || die "can't enter $G"
 "$PROTON_BIN" run "$G/TF2VR/tools/crash_monitor.exe" "$(win "$G/TF2VR")" "$(win "$G/Titanfall2VRLauncher.exe")" "${ARGS[@]}" "$@" &
 proton_pid=$!
 
-# `proton run` keeps waiting while the EA app is open, so follow crash_monitor.exe instead
-monitor_running() { pgrep -f '^Z:.*crash_monitor\.exe' >/dev/null; }
-for _ in $(seq 1 60); do monitor_running && break; kill -0 "$proton_pid" 2>/dev/null || break; sleep 1; done
-while monitor_running; do sleep 2; done
+# Wait for the game itself. Do NOT wait for crash_monitor.exe by name.
+#
+# The old check was `pgrep -f '^Z:.*crash_monitor\.exe'`, which can never match: Wine
+# processes are exec'd as `wine64-preloader`, so no /proc/*/cmdline ever begins with `Z:`.
+# `monitor_running` therefore returned false on every call, the 60-iteration loop below
+# spun out its full count (~71 s of wall clock), and the script then fell straight through
+# to `wineserver -k` and tore down the prefix *while the game was still running*. That
+# teardown - not a crash - is what ended Titanfall2.exe, 57-61 s in, every run. The run5
+# sigtrace log shows exactly 60 `kill -0 $proton_pid` probes followed by teardown 1.03 s
+# after the 60th, then every wine64 client dying inside a 24 ms SIGQUIT cascade.
+#
+# Titanfall2VRLauncher.exe *is* the game process: it maps client.dll, engine.dll,
+# mileswin64.dll, bink2w64.dll and Northstar.dll itself, and there is no separate
+# Titanfall2.exe anywhere. Wine sets a PE's /proc/<pid>/comm to the exe's basename and the
+# kernel caps comm at 15 characters, so the game's comm is the truncated "Titanfall2VRLau".
+# Matching that prefix costs one pgrep - a single process that scans /proc itself in ~26 ms -
+# instead of thousands of per-pid greps.
+#
+# Do NOT match on the command line instead: `pgrep -f Titanfall2` also matches this prefix's
+# Proton wrapper, its crash_monitor.exe, and an unrelated steam.exe whose arguments contain
+# the game's install path.
+game_pid=""
+game_start=""
+proc_id() {
+  local rest
+  read -r rest 2>/dev/null < "/proc/$1/stat" || return 1
+  rest=${rest##*) }          # strip "pid (comm) "; comm may contain spaces or parens
+  set -- $rest
+  [ "$#" -ge 20 ] || return 1
+  echo "${1} ${20}"          # state, then starttime (field 22 overall)
+}
+find_game_pid() {
+  local p c
+  p=$(pgrep '^Titanfall2VR' 2>/dev/null | head -1)
+  [ -n "$p" ] && { echo "$p"; return 0; }
+  # Belt and braces: if a Wine build leaves comm as wine64-preloader, fall back to searching
+  # maps - but only among processes that can have a PE mapped at all.
+  for p in /proc/[0-9]*; do
+    # stderr is redirected *before* the input redirect on purpose: a pid can vanish between
+    # the glob and the read, and bash reports that on the input redirect, which a 2>/dev/null
+    # placed after it would not suppress.
+    read -r c 2>/dev/null < "$p/comm" || continue
+    case "$c" in wine*) ;; *) continue ;; esac
+    grep -qF Titanfall2VRLauncher.exe "$p/maps" 2>/dev/null || continue
+    echo "${p#/proc/}"
+    return 0
+  done
+  return 1
+}
+game_running() {
+  local id st
+  if [ -n "$game_pid" ]; then
+    # Check the start time as well as liveness, so a recycled pid cannot keep this loop alive
+    # forever, and reject zombies - they still answer kill -0 and keep their start time, so
+    # a corpse would otherwise hold the launcher open indefinitely.
+    if id=$(proc_id "$game_pid"); then
+      st=${id%% *}
+      if [ "$st" != Z ] && [ "${id##* }" = "$game_start" ]; then
+        return 0
+      fi
+    fi
+    game_pid=""
+  fi
+  game_pid=$(find_game_pid) || return 1
+  id=$(proc_id "$game_pid") || return 1
+  game_start=${id##* }
+  return 0
+}
+# Startup wait: the game appears ~12 s in. If it never turns up, do not tear the prefix down
+# on a guess - fall back to waiting for Proton, which cannot kill a live game.
+for _ in $(seq 1 120); do game_running && break; kill -0 "$proton_pid" 2>/dev/null || break; sleep 1; done
+if [ -z "$game_pid" ]; then
+  echo "Game process not found; waiting for the Proton run to end rather than tearing down."
+  game_running() { kill -0 "$proton_pid" 2>/dev/null; }
+fi
+while game_running; do sleep 2; done
 [ -n "$presence_pid" ] && kill "$presence_pid" 2>/dev/null
 
 # crash_monitor.exe records how the game ended in its newest session folder
 session=$(ls -1d "$G"/TF2VR/crashes/*/ 2>/dev/null | tail -n 1)
+# The loop above ends when the *game* dies, but crash_monitor.exe is still alive at that
+# moment and writes process_exit a moment later. Give it a bounded moment to do so, or the
+# exit code below is a race and reads "unknown" for a clean exit. Bounded, because a
+# teardown hard enough to kill the monitor as well would never write it, and we must not
+# hang here.
+for _ in $(seq 1 25); do
+  grep -q 'process_exit' "$session/monitor.txt" 2>/dev/null && break
+  sleep 0.2
+done
 rc=$(sed -n 's/.*process_exit pid=[0-9]* code=\([0-9-]*\).*/\1/p' "$session/monitor.txt" 2>/dev/null | tail -n 1)
 echo "Game exited with code ${rc:-unknown}"
 
