@@ -4,8 +4,14 @@
 #   ./install.sh                  set up Proton-TF2VR, install or update the mod, install the tf2vr launcher
 #   ./install.sh --check          preflight checks only, change nothing
 #   ./install.sh --force          reinstall the mod even if it is already up to date
-#   ./install.sh --refresh-proton rebuild Proton-TF2VR from the current Proton Experimental
+#   ./install.sh --refresh-proton rebuild Proton-TF2VR from the newest compatible Proton build
 #   ./install.sh --uninstall      remove the mod files, launcher and Proton-TF2VR (campaign saves are kept)
+#
+# Titanfall 2 from the EA app (Faugus, Heroic, Lutris, Bottles...) instead of Steam is found
+# automatically, or point at it:
+#   ./install.sh --game DIR       the folder with Titanfall2.exe
+#   ./install.sh --prefix DIR     the Wine prefix the EA app is installed in
+#   ./install.sh --proton-base DIR  build Proton-TF2VR from this Proton build
 #
 # Installs exactly what CircuitLordVRModInstaller.exe installs on Windows (same downloads,
 # same checksums, same file layout), plus the Proton audio fix and the newer VC++ runtime the
@@ -27,19 +33,38 @@ STATE="${XDG_DATA_HOME:-$HOME/.local/share}/tf2vr"
 CONF="${XDG_CONFIG_HOME:-$HOME/.config}/tf2vr/paths.env"
 CACHE="${XDG_CACHE_HOME:-$HOME/.cache}/tf2vr"
 
+GE_NAME="GE-Proton11-1"
+GE_URL="https://github.com/GloriousEggroll/proton-ge-custom/releases/download/$GE_NAME/$GE_NAME.tar.gz"
+GE_SHA="ce6dd663ea01725a31805ed5c165723a253cdf0945a6642907330742ae2de5e4"
+STEAM_OFFER="Origin.OFR.50.0001456"
+NO_STEAM_DIR="$STATE/no-steam"
+
 RUN_CMD=tf2vr
 MODE=install
 FORCE=0
 REFRESH_PROTON=0
-for a in "$@"; do
-  case "$a" in
+OPT_GAME=""
+OPT_PREFIX=""
+OPT_BASE=""
+while [ $# -gt 0 ]; do
+  case "$1" in
     --check)          MODE=check ;;
     --uninstall)      MODE=uninstall ;;
     --force)          FORCE=1 ;;
     --refresh-proton) REFRESH_PROTON=1 ;;
-    -h|--help)        sed -n '2,13p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
-    *) echo "install.sh: unknown option '$a' (try --help)" >&2; exit 2 ;;
+    --game|--prefix|--proton-base)
+      [ $# -ge 2 ] || { echo "install.sh: $1 needs a folder" >&2; exit 2; }
+      [ -d "$2" ] || { echo "install.sh: $1: '$2' isn't a folder" >&2; exit 2; }
+      case "$1" in
+        --game)        OPT_GAME=$(readlink -f "$2") ;;
+        --prefix)      OPT_PREFIX=$(readlink -f "$2") ;;
+        --proton-base) OPT_BASE=$(readlink -f "$2") ;;
+      esac
+      shift ;;
+    -h|--help)        awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' "${BASH_SOURCE[0]}"; exit 0 ;;
+    *) echo "install.sh: unknown option '$1' (try --help)" >&2; exit 2 ;;
   esac
+  shift
 done
 
 fails=0
@@ -55,22 +80,57 @@ win() { local p; p=$(readlink -f "$1"); printf 'Z:%s' "${p//\//\\}"; }
 # ------------------------------------------------------------ discovery --
 find_steam() {
   local c
-  for c in "${STEAM_DIR:-}" "$HOME/.local/share/Steam" "$HOME/.steam/steam" \
-           "$HOME/.var/app/com.valvesoftware.Steam/.local/share/Steam"; do
+  for c in "${STEAM_DIR:-}" "$HOME/.local/share/Steam" "$HOME/.steam/steam" "$HOME/.steam/root" \
+           "$HOME/.steam/debian-installation" "$HOME/.var/app/com.valvesoftware.Steam/.local/share/Steam"; do
     if [ -n "$c" ] && [ -f "$c/steamapps/libraryfolders.vdf" ]; then readlink -f "$c"; return 0; fi
   done
   return 1
 }
 
 libraries() {
-  printf '%s\n' "$STEAM"
-  sed -n 's/^[[:space:]]*"path"[[:space:]]*"\(.*\)"[[:space:]]*$/\1/p' "$STEAM/steamapps/libraryfolders.vdf"
+  [ -n "$STEAM" ] || return 0
+  { printf '%s\n' "$STEAM"
+    sed -n 's/^[[:space:]]*"path"[[:space:]]*"\(.*\)"[[:space:]]*$/\1/p' "$STEAM/steamapps/libraryfolders.vdf"
+  } | awk '!seen[$0]++'
+}
+
+compat_root() {
+  if [ "$(basename "$1")" = pfx ] && [ -d "$1/drive_c" ]; then dirname "$1"; else printf '%s\n' "$1"; fi
+}
+
+ea_candidates() {
+  local root lib
+  for root in "$HOME/Faugus" "$HOME/Games" "${XDG_DATA_HOME:-$HOME/.local/share}/bottles/bottles" \
+              "$HOME/.var/app/com.usebottles.bottles/data/bottles/bottles" "$HOME/.wine"; do
+    [ -d "$root" ] && find "$root" -maxdepth 10 -type f -name Titanfall2.exe -path '*/drive_c/*' 2>/dev/null
+  done
+  while IFS= read -r lib; do
+    [ -d "$lib/steamapps/compatdata" ] && find "$lib/steamapps/compatdata" -mindepth 1 -maxdepth 8 \
+      -path "$lib/steamapps/compatdata/$APPID" -prune -o -type f -name Titanfall2.exe -path '*/drive_c/*' -print 2>/dev/null
+  done < <(libraries)
+}
+
+discover_ea() {
+  local hits=() h
+  [ -n "$OPT_GAME" ] && GAME=$OPT_GAME
+  [ -n "$OPT_PREFIX" ] && PREFIX=$(compat_root "$OPT_PREFIX")
+  if [ -z "$GAME" ]; then
+    if [ -n "$OPT_PREFIX" ]; then
+      mapfile -t hits < <(find "$OPT_PREFIX/" -maxdepth 8 -type f -name Titanfall2.exe -path '*/drive_c/*' 2>/dev/null)
+    else
+      mapfile -t hits < <(ea_candidates | awk '!seen[$0]++')
+    fi
+    for h in "${hits[@]}"; do EA_HITS+=("$(dirname "$h")"); done
+    [ "${#EA_HITS[@]}" = 1 ] && GAME=${EA_HITS[0]}
+  fi
+  if [ -z "$PREFIX" ] && [ -n "$GAME" ]; then
+    case "$GAME" in */drive_c/*) PREFIX=$(compat_root "${GAME%%/drive_c/*}") ;; esac
+  fi
 }
 
 discover() {
   STEAM=$(find_steam) || STEAM=""
-  GAME="" PREFIX="" EXPERIMENTAL=""
-  [ -n "$STEAM" ] || return 0
+  GAME="" PREFIX="" EXPERIMENTAL="" GAME_SOURCE=steam EA_HITS=()
   local lib
   while IFS= read -r lib; do
     if [ -z "$GAME" ] && [ -f "$lib/steamapps/common/Titanfall2/Titanfall2.exe" ]; then
@@ -80,13 +140,26 @@ discover() {
     if [ -z "$EXPERIMENTAL" ] && [ -x "$lib/steamapps/common/Proton - Experimental/proton" ]; then
       EXPERIMENTAL="$lib/steamapps/common/Proton - Experimental"
     fi
-  done < <(libraries | awk '!seen[$0]++')
-  TOOL="$STEAM/compatibilitytools.d/$TOOL_NAME"
+  done < <(libraries)
+  if [ -n "$GAME" ] && [ ! -d "$PREFIX/pfx" ]; then
+    while IFS= read -r lib; do
+      [ -d "$lib/steamapps/compatdata/$APPID/pfx" ] && { PREFIX="$lib/steamapps/compatdata/$APPID"; break; }
+    done < <(libraries)
+  fi
+  if [ -n "$OPT_GAME$OPT_PREFIX" ] || [ -z "$GAME" ]; then
+    GAME_SOURCE=ea GAME="" PREFIX=""
+    discover_ea
+  fi
+  PFX="$PREFIX"
+  [ -n "$PREFIX" ] && [ -e "$PREFIX/pfx" ] && PFX="$PREFIX/pfx"
+  TOOLS_DIR="${STEAM:-$HOME/.local/share/Steam}/compatibilitytools.d"
+  TOOL="$TOOLS_DIR/$TOOL_NAME"
   PROTON="$TOOL/proton"
 }
 
 # The compat tool Steam is set to use for Titanfall 2, if any
 steam_compat_tool() {
+  [ -n "$STEAM" ] || return 0
   python3 - "$STEAM/config/config.vdf" "$APPID" <<'PY' 2>/dev/null || true
 import re, sys
 text = open(sys.argv[1], encoding="utf-8", errors="ignore").read()
@@ -149,11 +222,38 @@ host_libs() {
   [ "$missing" = 1 ] || ok "system libraries Proton needs (gnutls, Vulkan, X11, PulseAudio)"
 }
 
+base_label() { awk '{ print $NF }' "$1/version" 2>/dev/null || basename "$1"; }
+
+proton_candidates() {
+  local d
+  if [ -n "$OPT_BASE" ]; then printf '%s\n' "$OPT_BASE"; return; fi
+  [ -n "$EXPERIMENTAL" ] && printf '%s\n' "$EXPERIMENTAL"
+  for d in "$TOOLS_DIR" "$HOME/.local/share/Steam/compatibilitytools.d" "$HOME/.steam/root/compatibilitytools.d" \
+           "${XDG_CONFIG_HOME:-$HOME/.config}/heroic/tools/proton" \
+           "$HOME/.var/app/com.heroicgameslauncher.hgl/config/heroic/tools/proton" \
+           "${XDG_DATA_HOME:-$HOME/.local/share}/umu/compatibilitytools" "$CACHE"; do
+    [ -d "$d" ] && find -L "$d" -mindepth 2 -maxdepth 2 -type f -name proton -printf '%h\n' 2>/dev/null | sort -V -r
+  done
+}
+
+pick_base() {
+  BASE="" BASE_LABEL=""
+  local d
+  while IFS= read -r d; do
+    [ -f "$d/$MMDEVAPI" ] && [ ! -f "$d/.tf2vr" ] || continue
+    case "$d" in *.partial) continue ;; esac
+    [ "$(mmdevapi check "$d/$MMDEVAPI")" = unpatched ] || continue
+    BASE=$d BASE_LABEL=$(base_label "$d")
+    return 0
+  done < <(proton_candidates | awk '!seen[$0]++')
+  return 1
+}
+
 # Proton is built for Steam's runtime, which brings its own glibc. Run outside it, as here, it uses
 # the system's, and on an older one Wine's X11 driver and the OpenXR loader refuse to load.
 glibc_check() {
   local dir need have
-  if [ -f "$PROTON" ]; then dir=$TOOL; else dir=${EXPERIMENTAL:-}; fi
+  if [ -f "$PROTON" ]; then dir=$TOOL; else dir=${BASE:-}; fi
   [ -n "$dir" ] && [ -f "$dir/files/lib/wine/x86_64-unix/winex11.so" ] || return 0
   need=$(grep -aoE 'GLIBC_2\.[0-9]+' "$dir/files/lib/wine/x86_64-unix/winex11.so" | sort -uV | tail -n 1 || true)
   need=${need#GLIBC_}
@@ -185,42 +285,62 @@ preflight() {
   else
     warn "No PulseAudio-compatible sound server is running; the audio fix needs one (with PipeWire, install pipewire-pulse)"
   fi
-  if [ -z "$STEAM" ]; then
-    fail "Steam not found (set STEAM_DIR=/path/to/Steam)"
-    return
-  fi
-  ok "Steam: $STEAM"
-
-  [ -n "$GAME" ] && ok "Titanfall 2: $GAME" \
-    || fail "Titanfall 2 not found in any Steam library - install it from Steam first"
-  if [ -n "$PREFIX" ] && [ -d "$PREFIX/pfx" ]; then
-    ok "Wine prefix: $PREFIX"
+  if [ "$GAME_SOURCE" = steam ]; then
+    ok "Steam: $STEAM"
+    ok "Titanfall 2 (Steam): $GAME"
+    if [ -d "$PREFIX/pfx" ]; then
+      ok "Wine prefix: $PREFIX"
+    else
+      fail "No Wine prefix for Titanfall 2 yet - launch the game once from Steam (EA app sign-in) first"
+    fi
   else
-    fail "No Wine prefix for Titanfall 2 yet - launch the game once from Steam (EA app sign-in) first"
+    if [ -n "$GAME" ]; then
+      ok "Titanfall 2 (EA app): $GAME"
+    elif [ "${#EA_HITS[@]}" -gt 1 ]; then
+      fail "Titanfall 2 is installed in more than one place - pick one with --game DIR --prefix DIR:"
+      printf '          %s\n' "${EA_HITS[@]}"
+    else
+      fail "Titanfall 2 not found on Steam or in a Faugus, Heroic, Lutris or Bottles prefix - point at it: ./install.sh --game DIR --prefix DIR"
+    fi
+    if [ -n "$PREFIX" ] && { [ -d "$PREFIX/pfx/drive_c" ] || [ -d "$PREFIX/drive_c" ]; }; then
+      ok "Wine prefix: $PREFIX"
+    elif [ -n "$PREFIX" ]; then
+      fail "$PREFIX isn't a Wine prefix (no drive_c in it)"
+    elif [ -n "$GAME" ]; then
+      fail "Couldn't tell which Wine prefix $GAME belongs to - add --prefix DIR (the prefix the EA app is installed in)"
+    fi
   fi
   # "EA Desktop\EA Desktop" is a Wine reparse point Linux can't follow, so look in the versioned folders
-  if [ -n "$PREFIX" ] && [ -n "$(find "$PREFIX/pfx/drive_c/Program Files/Electronic Arts/EA Desktop" -maxdepth 3 -name EADesktop.exe -print -quit 2>/dev/null)" ]; then
+  if [ -n "$PREFIX" ] && [ -n "$(find "$PFX/drive_c/Program Files/Electronic Arts/EA Desktop" -maxdepth 3 -name EADesktop.exe -print -quit 2>/dev/null)" ]; then
     ok "EA app installed in the prefix"
-  else
+  elif [ -z "$PREFIX" ]; then
+    :
+  elif [ "$GAME_SOURCE" = steam ]; then
     warn "EA app not found in the prefix - launch Titanfall 2 once from Steam and sign in"
+  else
+    warn "EA app not found in the prefix - install it there with your launcher and sign in"
   fi
 
   if [ -f "$PROTON" ] && [ "$(mmdevapi check "$TOOL/$MMDEVAPI")" = patched ]; then
-    ok "$TOOL_NAME ready (audio fix applied)"
-  elif [ -n "$EXPERIMENTAL" ]; then
-    case "$(mmdevapi check "$EXPERIMENTAL/$MMDEVAPI")" in
-      unpatched) ok "Proton Experimental: $EXPERIMENTAL ($(cut -d' ' -f2 "$EXPERIMENTAL/version"))" ;;
-      *) fail "This Proton Experimental build has a different mmdevapi.dll than the audio fix expects ($(cut -d' ' -f2 "$EXPERIMENTAL/version"))" ;;
-    esac
+    ok "$TOOL_NAME ready ($(base_label "$TOOL"), audio fix applied)"
+  elif pick_base; then
+    ok "Proton to build $TOOL_NAME from: $BASE_LABEL ($BASE)"
+  elif [ -n "$OPT_BASE" ]; then
+    fail "The audio fix doesn't match $OPT_BASE ($(base_label "$OPT_BASE")); Proton Experimental and $GE_NAME are known to work"
   else
-    fail "Proton Experimental not installed (Steam -> Library -> search 'Proton Experimental' -> Install)"
+    ok "No compatible Proton installed - $GE_NAME (about 530 MB) will be downloaded to build $TOOL_NAME"
+  fi
+  if [ -n "$OPT_BASE" ] && [ "${BASE:-}" != "$OPT_BASE" ] && [ -f "$PROTON" ] && [ "$REFRESH_PROTON" = 0 ]; then
+    warn "$TOOL_NAME already exists, so --proton-base is only used with --refresh-proton"
   fi
   glibc_check
 
-  local tool
-  tool=$(steam_compat_tool)
-  [ "$tool" = "$TOOL_NAME" ] && ok "Steam runs Titanfall 2 with $TOOL_NAME" \
-    || warn "Steam runs Titanfall 2 with '${tool:-default Proton}' - switch it to $TOOL_NAME after install (Properties -> Compatibility)"
+  if [ "$GAME_SOURCE" = steam ]; then
+    local tool
+    tool=$(steam_compat_tool)
+    [ "$tool" = "$TOOL_NAME" ] && ok "Steam runs Titanfall 2 with $TOOL_NAME" \
+      || warn "Steam runs Titanfall 2 with '${tool:-default Proton}' - switch it to $TOOL_NAME after install (Properties -> Compatibility)"
+  fi
 
   local rt="${XDG_CONFIG_HOME:-$HOME/.config}/openxr/1/active_runtime.json"
   [ -f "$rt" ] || rt=/etc/xdg/openxr/1/active_runtime.json
@@ -234,29 +354,48 @@ preflight() {
 }
 
 # ------------------------------------------------------- Proton-TF2VR --
+download_ge() {
+  mkdir -p "$CACHE"
+  fetch "$GE_URL" "$GE_SHA" "$CACHE/$GE_NAME.tar.gz"
+  rm -rf "$CACHE/$GE_NAME.unpack"
+  mkdir -p "$CACHE/$GE_NAME.unpack"
+  echo "  unpacking $GE_NAME..."
+  tar -xzf "$CACHE/$GE_NAME.tar.gz" -C "$CACHE/$GE_NAME.unpack" || die "couldn't unpack $CACHE/$GE_NAME.tar.gz"
+  [ -f "$CACHE/$GE_NAME.unpack/$GE_NAME/proton" ] || die "$GE_NAME.tar.gz doesn't contain $GE_NAME/proton"
+  [ "$(mmdevapi check "$CACHE/$GE_NAME.unpack/$GE_NAME/$MMDEVAPI")" = unpatched ] \
+    || die "the audio fix doesn't match the downloaded $GE_NAME"
+  BASE="$CACHE/$GE_NAME.unpack/$GE_NAME" BASE_LABEL=$GE_NAME
+}
+
 setup_proton() {
   echo
   echo "$TOOL_NAME:"
   if [ "$REFRESH_PROTON" = 0 ] && [ -f "$PROTON" ] && [ "$(mmdevapi check "$TOOL/$MMDEVAPI")" = patched ]; then
-    ok "already set up ($(cut -d' ' -f2 "$TOOL/version"))"
+    ok "already set up ($(base_label "$TOOL"))"
     return
   fi
-  [ -n "$EXPERIMENTAL" ] || die "Proton Experimental is not installed"
-  [ "$(mmdevapi check "$EXPERIMENTAL/$MMDEVAPI")" = unpatched ] \
-    || die "Proton Experimental's mmdevapi.dll doesn't match the audio fix; it can't be applied to this build"
+  if ! pick_base; then
+    [ -z "$OPT_BASE" ] || die "the audio fix doesn't match $OPT_BASE"
+    download_ge
+  fi
+  [ -z "$OPT_BASE" ] || [ "$BASE" = "$OPT_BASE" ] || die "the audio fix doesn't match $OPT_BASE"
 
   if [ -e "$TOOL" ]; then
     [ -f "$TOOL/.tf2vr" ] || die "$TOOL exists and wasn't made by this script; move it away first"
     rm -rf "$TOOL"
   fi
-  mkdir -p "$STEAM/compatibilitytools.d"
+  mkdir -p "$TOOLS_DIR"
   rm -rf "$TOOL.partial"
-  echo "  copying Proton Experimental (about 1.5 GB)..."
-  cp -a "$EXPERIMENTAL" "$TOOL.partial"
+  case "$BASE" in
+    "$CACHE/$GE_NAME.unpack/"*)
+      mv "$BASE" "$TOOL.partial"
+      rm -rf "$CACHE/$GE_NAME.unpack" ;;
+    *)
+      echo "  copying $BASE_LABEL (about 1.5 GB)..."
+      cp -a --reflink=auto "$BASE" "$TOOL.partial" ;;
+  esac
   rm -f "$TOOL.partial/dist.lock"
   touch "$TOOL.partial/.tf2vr"
-  local version
-  version=$(cut -d' ' -f2 "$TOOL.partial/version")
   cat > "$TOOL.partial/compatibilitytool.vdf" <<VDF
 "compatibilitytools"
 {
@@ -265,7 +404,7 @@ setup_proton() {
     "$TOOL_NAME"
     {
       "install_path" "."
-      "display_name" "$TOOL_NAME ($version + TF2VR audio fix)"
+      "display_name" "$TOOL_NAME ($BASE_LABEL + TF2VR audio fix)"
       "from_oslist" "windows"
       "to_oslist" "linux"
     }
@@ -274,9 +413,13 @@ setup_proton() {
 VDF
   [ "$(mmdevapi apply "$TOOL.partial/$MMDEVAPI")" = patched ] || die "patching mmdevapi.dll failed"
   mv "$TOOL.partial" "$TOOL"
-  ok "copied Proton Experimental $version to $TOOL"
+  ok "built $TOOL from $BASE_LABEL"
   ok "mmdevapi.dll patched (original kept as mmdevapi.dll.orig)"
-  echo "  Restart Steam, then set Titanfall 2 -> Properties -> Compatibility -> $TOOL_NAME"
+  if [ "$GAME_SOURCE" = steam ]; then
+    echo "  Restart Steam, then set Titanfall 2 -> Properties -> Compatibility -> $TOOL_NAME"
+  else
+    echo "  In your launcher (Faugus, Heroic, Lutris...), set the EA app's and Titanfall 2's Proton to $TOOL_NAME"
+  fi
 }
 
 # --------------------------------------------------- VC++ runtime (prefix) --
@@ -286,7 +429,7 @@ VC_DLLS="concrt140 msvcp140 msvcp140_1 msvcp140_2 msvcp140_atomic_wait msvcp140_
 # Version of the prefix's msvcp140.dll when it's Microsoft's own build, e.g. 14.44.35211.0.
 # Empty when it's missing or Wine's built-in copy, which reports 14.42 but isn't Microsoft's runtime.
 vc_version() {
-  python3 - "$PREFIX/pfx/drive_c/windows/system32/msvcp140.dll" <<'PY' 2>/dev/null || true
+  python3 - "$PFX/drive_c/windows/system32/msvcp140.dll" <<'PY' 2>/dev/null || true
 import struct, sys
 data = open(sys.argv[1], "rb").read()
 i = data.find("VS_VERSION_INFO".encode("utf-16-le"))
@@ -331,7 +474,7 @@ PY
 ensure_vcredist() {
   echo
   echo "VC++ runtime in the prefix:"
-  local sys32="$PREFIX/pfx/drive_c/windows/system32" version
+  local sys32="$PFX/drive_c/windows/system32" version
   version=$(vc_version)
   if vc_new_enough "$version"; then
     ok "msvcp140.dll $version"
@@ -341,9 +484,8 @@ ensure_vcredist() {
   echo "  Installing the current VC++ redistributable into the Titanfall 2 prefix..."
   mkdir -p "$CACHE"
   curl -fL --progress-bar -o "$CACHE/vc_redist.x64.exe" "$VCREDIST_URL" || die "couldn't download $VCREDIST_URL"
-  WINEPREFIX="$PREFIX/pfx" "$TOOL/files/bin/wineserver" -k 2>/dev/null || true
-  STEAM_COMPAT_CLIENT_INSTALL_PATH="$STEAM" STEAM_COMPAT_DATA_PATH="$PREFIX" \
-    "$PROTON" waitforexitandrun "$CACHE/vc_redist.x64.exe" /install /quiet /norestart > "$CACHE/vc_redist.log" 2>&1 || true
+  stop_prefix
+  run_in_prefix waitforexitandrun "$CACHE/vc_redist.x64.exe" /install /quiet /norestart > "$CACHE/vc_redist.log" 2>&1 || true
   version=$(vc_version)
 
   # Microsoft's installer sometimes finishes without changing anything under Wine. Copy the
@@ -370,6 +512,33 @@ Nothing has been installed into the game yet. Install cabextract or bsdtar (liba
 ./install.sh again, or install the runtime with: protontricks $APPID vcrun2022"
   fi
   ok "msvcp140.dll $version"
+}
+
+compat_client_dir() {
+  if [ "$GAME_SOURCE" = steam ]; then
+    printf '%s\n' "$STEAM"
+  else
+    mkdir -p "$NO_STEAM_DIR"
+    printf '%s\n' "$NO_STEAM_DIR"
+  fi
+}
+
+run_in_prefix() {
+  STEAM_COMPAT_CLIENT_INSTALL_PATH="$(compat_client_dir)" STEAM_COMPAT_DATA_PATH="$PREFIX" "$PROTON" "$@"
+}
+
+stop_prefix() {
+  WINEPREFIX="$PFX" "$TOOL/files/bin/wineserver" -k 2>/dev/null || true
+}
+
+ensure_pfx_layout() {
+  [ -e "$PREFIX/pfx" ] && { PFX="$PREFIX/pfx"; return; }
+  [ -d "$PREFIX/drive_c" ] || die "$PREFIX isn't a Wine prefix (no drive_c in it)"
+  ln -s . "$PREFIX/pfx"
+  mkdir -p "$STATE"
+  printf '%s\n' "$PREFIX" > "$STATE/pfx-link"
+  PFX="$PREFIX/pfx"
+  ok "linked $PREFIX/pfx to the prefix itself, the layout Proton expects (umu does the same)"
 }
 
 # Everything after this runs Windows programs through Proton-TF2VR directly (outside Steam), which
@@ -465,10 +634,9 @@ print(t["version"], t["url"], t["sha256"], m["installer"]["commit"])' <<<"$manif
   # Game-derived files ship as patches; asset_patcher.exe builds them from the installed game.
   # Run it before anything in the game folder changes, like the official installer does.
   [ -f "$PROTON" ] || die "$TOOL_NAME is missing"
-  [ -f "$PREFIX/pfx/system.reg" ] || die "no Wine prefix at $PREFIX - launch Titanfall 2 from Steam once first"
+  [ -f "$PFX/system.reg" ] || die "no Wine prefix at $PREFIX - start Titanfall 2 once the normal way first"
   echo "  building game assets (first run also updates the Wine prefix, this can take a minute)..."
-  STEAM_COMPAT_CLIENT_INSTALL_PATH="$STEAM" STEAM_COMPAT_DATA_PATH="$PREFIX" \
-    "$PROTON" run "$WORK/mod/asset_patcher.exe" apply "$(win "$GAME")" "$(win "$WORK/mod/patches")" "$(win "$WORK/assets")" \
+  run_in_prefix run "$WORK/mod/asset_patcher.exe" apply "$(win "$GAME")" "$(win "$WORK/mod/patches")" "$(win "$WORK/assets")" \
     > "$WORK/patcher.log" 2>&1 || true
   python3 - "$WORK/mod/patches/manifest.json" "$WORK/assets" <<'PY' || { tail -n 20 "$WORK/patcher.log" >&2; die "asset_patcher.exe didn't build the game assets (log above)"; }
 import hashlib, json, os, sys
@@ -524,6 +692,8 @@ install_launcher() {
   {
     echo "# written by tf2vr-linux/install.sh"
     printf 'STEAM_ROOT=%q\nGAME_DIR=%q\nPREFIX_DIR=%q\nPROTON_BIN=%q\n' "$STEAM" "$GAME" "$PREFIX" "$PROTON"
+    printf 'GAME_SOURCE=%q\nNO_STEAM_DIR=%q\n' "$GAME_SOURCE" "$NO_STEAM_DIR"
+    if [ "$GAME_SOURCE" = steam ]; then printf 'CONTENT_ID=%q\n' "$STEAM_OFFER"; else echo "CONTENT_ID="; fi
   } > "$CONF"
   ok "$CONF"
 
@@ -555,6 +725,12 @@ uninstall() {
     done < "$STATE/files.txt"
     ok "removed $n mod files from $GAME"
   fi
+  local link
+  link=$(cat "$STATE/pfx-link" 2>/dev/null || true)
+  if [ -n "$link" ] && [ -L "$link/pfx" ] && [ "$(readlink "$link/pfx")" = . ]; then
+    rm -f "$link/pfx"
+    ok "removed the pfx link install.sh added to $link"
+  fi
   rm -rf "$STATE" "$(dirname "$CONF")"
   rm -f "$BIN/tf2vr" "$APPS/tf2vr.desktop"
   ok "removed the launcher and app menu entry"
@@ -562,8 +738,12 @@ uninstall() {
     rm -rf "$TOOL"
     ok "removed $TOOL"
   fi
-  [ "$(steam_compat_tool)" = "$TOOL_NAME" ] \
-    && warn "Steam still runs Titanfall 2 with $TOOL_NAME - switch it back (Properties -> Compatibility) and restart Steam"
+  if [ "$GAME_SOURCE" = steam ]; then
+    [ "$(steam_compat_tool)" = "$TOOL_NAME" ] \
+      && warn "Steam still runs Titanfall 2 with $TOOL_NAME - switch it back (Properties -> Compatibility) and restart Steam"
+  else
+    warn "If your launcher runs the EA app or Titanfall 2 with $TOOL_NAME, switch them to another Proton"
+  fi
   echo "  Kept: campaign saves (in the Wine prefix) and Northstar logs under $GAME/TF2VR"
 }
 
@@ -577,10 +757,14 @@ case "$MODE" in
   install)
     [ "$fails" = 0 ] || die "fix the failed checks above first"
     setup_proton
+    fails_before=$fails
+    glibc_check
+    [ "$fails" = "$fails_before" ] || die "the system glibc is too old for $TOOL_NAME (see above)"
     if pgrep -f '[\\/](Titanfall2|Titanfall2VRLauncher|EADesktop)\.exe' >/dev/null; then
       die "Titanfall 2 or the EA app is running - close them first"
     fi
     check_wine_runs
+    ensure_pfx_layout
     ensure_vcredist
     install_mod
     install_launcher
@@ -595,6 +779,11 @@ fi
 echo "Done ($warns warning(s))."
 if [ "$MODE" = install ]; then
   echo "Start your headset's OpenXR runtime (e.g. SteamVR), then run:  $RUN_CMD   (or 'Titanfall 2 VR' in your app menu)"
-  echo "Steam's Play button keeps starting the normal, flat game."
+  if [ "$GAME_SOURCE" = steam ]; then
+    echo "Steam's Play button keeps starting the normal, flat game."
+  else
+    echo "Set the EA app's and Titanfall 2's Proton to $TOOL_NAME in your launcher too, so both use the same Wine."
+    echo "Starting the game from your launcher keeps starting the normal, flat game."
+  fi
 fi
 exit 0

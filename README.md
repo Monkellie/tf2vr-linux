@@ -8,8 +8,8 @@ Play [CircuitLord's Titanfall 2 VR mod](https://github.com/CircuitLord/CircuitLo
 ## What you need
 
 - An **x86_64** Linux PC with a current distro (glibc 2.38 or newer, [details](#which-headsets-and-distros-work)). A standalone Steam Frame or other ARM device can't run this ([why](#can-i-play-on-a-steam-frame-or-other-arm-device)).
-- **Titanfall 2 on Steam**
-- **Proton Experimental**, installed in Steam: Library → search "Proton Experimental" → Install
+- **Titanfall 2 on Steam**, or from the **EA app** run through Faugus, Heroic, Lutris or Bottles ([without Steam](#without-steam-ea-app))
+- **Proton Experimental**, installed in Steam: Library → search "Proton Experimental" → Install. Without Steam, `install.sh` downloads a compatible Proton itself.
 - A **VR runtime**: SteamVR (Settings → OpenXR → "Set SteamVR as OpenXR runtime"), or WiVRn / Monado
 - A few tools:
   - Arch, CachyOS, EndeavourOS: `sudo pacman -S --needed python unzip cabextract`
@@ -29,6 +29,24 @@ Play [CircuitLord's Titanfall 2 VR mod](https://github.com/CircuitLord/CircuitLo
    It checks your system first and tells you if anything is missing.
 3. **Restart Steam**, then set **Titanfall 2 → Properties → Compatibility → Proton-TF2VR**.
 
+## Without Steam (EA app)
+
+If you own Titanfall 2 on the EA app and run it with Proton through Faugus, Heroic, Lutris or Bottles, nothing here needs Steam:
+
+1. **In your launcher, install the EA app and Titanfall 2 in the same Wine prefix,** sign in, and start the game once the normal way. Then quit.
+2. **Run the installer:**
+   ```sh
+   git clone https://github.com/Monkellie/tf2vr-linux.git
+   cd tf2vr-linux
+   ./install.sh
+   ```
+   It finds Titanfall 2 in Faugus (`~/Faugus`), Heroic and Lutris (`~/Games`), Bottles and `~/.wine` prefixes, and in Steam prefixes if you added the EA app to Steam as a non-Steam game. If it finds none or several, point it at yours: `./install.sh --game /path/to/Titanfall2 --prefix /path/to/prefix`.
+   If you have no compatible Proton installed, it downloads [GE-Proton11-1](https://github.com/GloriousEggroll/proton-ge-custom/releases/tag/GE-Proton11-1) (about 530 MB, checked against its published checksum) and builds Proton-TF2VR from it, in `~/.local/share/Steam/compatibilitytools.d`.
+3. **In your launcher, set the EA app's (and Titanfall 2's) Proton to Proton-TF2VR,** so the normal game and VR use the same Wine. If it isn't listed, choose that folder as a custom Proton.
+4. **Play with `tf2vr`**, as below. In Heroic you can also add `~/.local/bin/tf2vr` as a native Linux app.
+
+Starting the game from your launcher keeps starting the normal, flat game.
+
 ## Play
 
 Put your headset on, then run `tf2vr` in a terminal or pick **Titanfall 2 VR** in your app menu. It starts SteamVR and the EA app for you, and closes the EA app when you quit.
@@ -47,7 +65,7 @@ git pull
 
 ## Uninstall
 
-Switch Titanfall 2 back to your old Proton in Steam (Properties → Compatibility), then run `./install.sh --uninstall`. Your VR campaign saves are kept.
+Switch Titanfall 2 back to your old Proton in Steam (Properties → Compatibility), or in your launcher without Steam, then run `./install.sh --uninstall`. Your VR campaign saves are kept.
 
 ## If something goes wrong
 
@@ -69,6 +87,8 @@ Switch Titanfall 2 back to your old Proton in Steam (Properties → Compatibilit
 | Achievements don't unlock in VR | [Update](#update) to the latest scripts. ([why](#why-does-the-launcher-manage-the-ea-app)) |
 | Discord shows SteamVR instead of Titanfall 2 | [Update](#update) to the latest scripts. ([why](#why-does-discord-show-steamvr-instead-of-titanfall-2)) |
 | Steam isn't found | Run `STEAM_DIR=/path/to/Steam ./install.sh`. |
+| `install.sh`: `Titanfall 2 not found` or `installed in more than one place` | Point it at your copy: `./install.sh --game /path/to/Titanfall2 --prefix /path/to/prefix`. ([without Steam](#without-steam-ea-app)) |
+| `install.sh`: `The audio fix doesn't match` | That Proton build compiles the audio code differently. Leave out `--proton-base`, and `install.sh` uses Proton Experimental or GE-Proton11-1. ([why](#why-does-it-need-its-own-copy-of-proton)) |
 | `Proton's Wine can't run directly on this system` | You're on an ARM device. ([see here](#can-i-play-on-a-steam-frame-or-other-arm-device)) |
 | `install.sh`: `glibc … is too old` | Your distro release is too old for the current Proton. Upgrade to one with glibc 2.38 or newer. ([which ones](#which-headsets-and-distros-work)) |
 
@@ -78,7 +98,7 @@ Switch Titanfall 2 back to your old Proton in Steam (Properties → Compatibilit
 - the newest `Titanfall2/TF2VR/logs/nslog*.txt`
 - the newest folder in `Titanfall2/TF2VR/crashes/`
 
-`Titanfall2/` is `<Steam library>/steamapps/common/Titanfall2`. For a Proton log as well, launch with `tf2vr --proton-log`; it's saved to `~/.local/state/tf2vr/steam-1237970.log`.
+`Titanfall2/` is `<Steam library>/steamapps/common/Titanfall2`, or the folder the EA app installed it to. For a Proton log as well, launch with `tf2vr --proton-log`; it's saved to `~/.local/state/tf2vr/steam-1237970.log`.
 
 ## FAQ
 
@@ -102,9 +122,11 @@ On top of that, it:
 
 For the audio fix. The mod captures game audio through `ActivateAudioInterfaceAsync("VAD\Process_Loopback")`, probably for haptics. Wine rejects that device, and the mod then crashes with `0xC0000409`. [polar421](https://github.com/polar421/Titanfall-2-VR-linux-fix) found that changing one jump in Proton's `mmdevapi.dll` (6 bytes at offset `0x369E`) sends the request to the default playback device instead, where Wine's PulseAudio driver already supports loopback capture.
 
-The fix goes into the private copy only, after checking the surrounding bytes match, so your other games are untouched. The copy is frozen, so Steam updates can't break it. To rebuild it from a newer Proton Experimental, run `./install.sh --refresh-proton`. If the new `mmdevapi.dll` doesn't match the fix, the script refuses rather than guessing; keep the old copy and open an issue.
+The fix goes into the private copy only, after checking the surrounding bytes match, so your other games are untouched. The copy is frozen, so Steam updates can't break it. To rebuild it from a newer Proton Experimental, run `./install.sh --refresh-proton`.
 
-Steam has to be set to Proton-TF2VR as well, because normal and VR launches share one Wine prefix, and switching Wine versions on a prefix breaks things.
+The fix only matches some Proton builds: Proton Experimental, Proton Hotfix and GE-Proton11-1, for example, but not newer GE-Proton releases, CachyOS or Wineland, which compile that code differently. `install.sh` uses the first compatible build it finds: Steam's Proton Experimental, then any compatible build in Steam's, Heroic's or umu's Proton folders. If there's none, it downloads GE-Proton11-1. `--proton-base DIR` picks a specific build. If the new `mmdevapi.dll` doesn't match the fix, the script refuses rather than guessing; keep the old copy and open an issue.
+
+Steam (or, without Steam, your launcher) has to be set to Proton-TF2VR as well, because normal and VR launches share one Wine prefix, and switching Wine versions on a prefix breaks things.
 
 ### Why does it install a newer VC++ runtime?
 
@@ -124,7 +146,7 @@ Copying CircuitLord's installer over `Titanfall2.exe` to run it in Proton is a d
 
 Titanfall 2 needs a signed-in EA app, and it checks the sign-in once, when it starts. So the launcher:
 - **Starts the EA app and waits until it's signed in**, then starts the game. Older versions waited a fixed 8 seconds. When the EA app took longer, the game decided you were logged out of Origin and quit (exit code 274).
-- **Tells the game which EA product it is.** When Steam starts Titanfall 2, EA's launcher gives the game `ContentId=Origin.OFR.50.0001456`, the EA offer your Steam copy is linked to. Without it, the game falls back to its built-in ID, the EA app can't match the session to your copy, and it refuses every achievement ("Entitlement not found" in `EADesktopVerbose.log`). The launcher sets the same value. The EA app still checks that you own the game.
+- **Tells the game which EA product it is.** When Steam starts Titanfall 2, EA's launcher gives the game `ContentId=Origin.OFR.50.0001456`, the EA offer your Steam copy is linked to. Without it, the game falls back to its built-in ID, the EA app can't match the session to your copy, and it refuses every achievement ("Entitlement not found" in `EADesktopVerbose.log`). The launcher sets the same value. The EA app still checks that you own the game. For EA-app copies it sets nothing, because the built-in ID is the one the EA store uses.
 - **Deletes the EA app's `backgroundservice.ini` first.** A session that was ended by force leaves this file behind. If the next EA background service happens to get the same Wine process ID, the EA app trusts the old port in the file and signs in 20 seconds late.
 - **Closes the EA app and its Wine session when you quit.** `proton run` doesn't return while the EA app is open, and Steam keeps showing Titanfall 2 as running. So the launcher follows `crash_monitor.exe` instead, reports the game's exit code, and then ends the session.
 - **Cleans up after Wine.** With the kernel's ntsync driver, which Proton 11 uses whenever `/dev/ntsync` exists, Wine processes that are waiting when the wineserver exits never wake up again. One of them is `explorer.exe`, whose tray window keeps showing the EA icon: the white box. The launcher ends whatever outlives the wineserver, after each session and before the next launch.
@@ -143,6 +165,10 @@ Discord recognises games by their program name, and it doesn't know `Titanfall2V
 So the launcher sets your status itself, through Discord's local socket: **Playing Titanfall 2 VR**, with the chapter, difficulty and play time, under Titanfall 2's icon. Discord ranks a status with details like these above apps it only detected, so this one shows instead of SteamVR, for you and for your friends. It works with the Discord app (native, Flatpak or Snap) and with Vesktop, and it clears when the game closes. `launch.log` says `Discord: showing "Playing Titanfall 2 VR"` once it's connected.
 
 SteamVR can still appear as a second activity on your own profile. To remove it completely, turn off its detection in Discord's **Settings → Registered Games**.
+
+### Can Steam or the game be on another drive?
+
+Yes. `install.sh` reads every library in Steam's `libraryfolders.vdf`, so the game can be on any drive. It also finds the game's Wine prefix when Steam keeps it in a different library than the game, which Steam does for drives it can't put prefixes on, such as NTFS or exFAT. Steam itself is found in `~/.local/share/Steam`, `~/.steam/steam`, `~/.steam/root`, `~/.steam/debian-installation` and the Flatpak location. If it's somewhere else, run `STEAM_DIR=/path/to/Steam ./install.sh`.
 
 ### Arch, CachyOS and other Arch-based distros
 
@@ -168,7 +194,7 @@ Tested on PikaOS (Debian sid) on Wayland, with an NVIDIA GPU, a Valve Index, Ste
 
 - **Other headsets:** polar421 has played the campaign on a Quest 3S through WiVRn with a similar setup. With these scripts, a tethered WiVRn user has got as far as the mod finding the headset and controllers.
 - **Other distros:** anything x86_64 with **glibc 2.38 or newer** should work: Ubuntu 24.04+, Linux Mint 22+, Pop!_OS 24.04+, Debian 13+, Fedora 39+, and current Arch and its derivatives (see the [Arch notes](#arch-cachyos-and-other-arch-based-distros)). Steam runs Proton inside its own runtime, which brings a newer glibc, but these scripts run Proton outside it, so your system's glibc has to be new enough. Ubuntu 22.04, Mint 21 and Pop!_OS 22.04 (2.35) and Debian 12 (2.36) are too old. `install.sh` checks this.
-- **Untested:** SteamOS on x86, and Flatpak Steam (`~/.var/app/com.valvesoftware.Steam/.local/share/Steam`).
+- **Untested:** SteamOS on x86, Flatpak Steam (`~/.var/app/com.valvesoftware.Steam/.local/share/Steam`), and EA-app copies through Faugus, Heroic, Lutris or Bottles.
 - **Two GPUs:** the game has to render on a GPU that has a monitor attached, and it has to be the same GPU your VR runtime uses.
 
 Reports welcome.

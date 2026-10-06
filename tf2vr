@@ -36,6 +36,10 @@ win() { local p; p=$(readlink -f "$1"); printf 'Z:%s' "${p//\//\\}"; }
 [ -f "$CONF" ] || die "Not installed - run install.sh from tf2vr-linux first."
 # shellcheck source=/dev/null
 . "$CONF"
+GAME_SOURCE=${GAME_SOURCE:-steam}
+NO_STEAM_DIR=${NO_STEAM_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/tf2vr/no-steam}
+[ "$GAME_SOURCE" = steam ] && CONTENT_ID=${CONTENT_ID-Origin.OFR.50.0001456}
+CONTENT_ID=${CONTENT_ID:-}
 G="$GAME_DIR"
 for f in Titanfall2VRLauncher.exe TF2VR/Northstar.dll TF2VR/plugins/Titanfall2VR.dll \
          TF2VR/tools/crash_monitor.exe TF2VR/tools/launch.json; do
@@ -55,7 +59,9 @@ data = open(sys.argv[1], "rb").read()
 sys.exit(0 if data[0x369E:0x369E + 6] == bytes.fromhex("0f843efdffff") else 1)
 PY
 
-pgrep -x steam >/dev/null || die "Steam isn't running - start Steam first."
+if [ "$GAME_SOURCE" = steam ]; then
+  pgrep -x steam >/dev/null || die "Steam isn't running - start Steam first."
+fi
 
 # Only SteamVR needs starting here; other OpenXR runtimes (WiVRn, Monado) are started by you
 RUNTIME_JSON="${XDG_CONFIG_HOME:-$HOME/.config}/openxr/1/active_runtime.json"
@@ -63,6 +69,7 @@ RUNTIME_JSON="${XDG_CONFIG_HOME:-$HOME/.config}/openxr/1/active_runtime.json"
 [ -f "$RUNTIME_JSON" ] || die "No OpenXR runtime is active. In SteamVR: Settings -> OpenXR -> Set SteamVR as OpenXR runtime."
 if grep -qiE 'steamvr|steamxr' "$(readlink -f "$RUNTIME_JSON")"; then
   if ! pgrep -x vrserver >/dev/null; then
+    command -v steam >/dev/null 2>&1 || die "SteamVR isn't running - start it, check the headset shows up, then launch again."
     echo "Starting SteamVR..."
     steam steam://rungameid/250820 >/dev/null 2>&1 &
     for _ in $(seq 1 60); do pgrep -x vrserver >/dev/null && break; sleep 1; done
@@ -93,7 +100,12 @@ for v in PROTON_USE_WINED3D PROTON_USE_WINED3D11 PROTON_ENABLE_WAYLAND MANGOHUD;
   [ "${!v}" != 0 ] && echo "WARNING: ignoring $v=${!v} - $why."
   unset "$v"
 done
-export STEAM_COMPAT_CLIENT_INSTALL_PATH="$STEAM_ROOT"
+if [ "$GAME_SOURCE" = steam ]; then
+  export STEAM_COMPAT_CLIENT_INSTALL_PATH="$STEAM_ROOT"
+else
+  mkdir -p "$NO_STEAM_DIR"
+  export STEAM_COMPAT_CLIENT_INSTALL_PATH="$NO_STEAM_DIR"
+fi
 export STEAM_COMPAT_DATA_PATH="$PREFIX_DIR"
 # Proton's steam.exe only sets up the VR bridge (vrclient_init_registry, which wineopenxr needs)
 # for processes it thinks Steam launched; without these xrCreateInstance crashes the mod.
@@ -161,7 +173,11 @@ if ! ea_running; then
   echo "Starting the EA app..."
   "$PROTON_BIN" run "$EA_EXE" >/dev/null 2>&1 &
   for _ in $(seq 1 45); do ea_running && break; sleep 1; done
-  ea_running || die "The EA app didn't start. Launch Titanfall 2 normally from Steam once to check you're signed in."
+  if [ "$GAME_SOURCE" = steam ]; then
+    ea_running || die "The EA app didn't start. Launch Titanfall 2 normally from Steam once to check you're signed in."
+  else
+    ea_running || die "The EA app didn't start. Start it once from your launcher (Faugus, Heroic, Lutris...) to check you're signed in."
+  fi
   signed_in=0
   for i in $(seq 1 180); do
     ea_signed_in && { signed_in=1; break; }
@@ -196,7 +212,9 @@ fi
 
 echo "Launching Titanfall 2 VR (log: $LOG)"
 cd "$G" || die "can't enter $G"
-ContentId=Origin.OFR.50.0001456 "$PROTON_BIN" run "$G/TF2VR/tools/crash_monitor.exe" "$(win "$G/TF2VR")" "$(win "$G/Titanfall2VRLauncher.exe")" "${ARGS[@]}" "$@" &
+launch_env=()
+[ -n "$CONTENT_ID" ] && launch_env=("ContentId=$CONTENT_ID")
+env "${launch_env[@]}" "$PROTON_BIN" run "$G/TF2VR/tools/crash_monitor.exe" "$(win "$G/TF2VR")" "$(win "$G/Titanfall2VRLauncher.exe")" "${ARGS[@]}" "$@" &
 proton_pid=$!
 
 # `proton run` keeps waiting while the EA app is open, so follow crash_monitor.exe instead
