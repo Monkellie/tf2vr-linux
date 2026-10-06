@@ -80,6 +80,7 @@ Switch Titanfall 2 back to your old Proton in Steam (Properties → Compatibilit
 | `install.sh`: `couldn't install the VC++ runtime` | Install `cabextract` and run `./install.sh` again, or run `protontricks 1237970 vcrun2022`. |
 | `engine.txt` stops at `stage=openxr_instance` | Start SteamVR (or WiVRn / Monado), check the headset is detected, and check it's set as the OpenXR runtime. |
 | The game runs, but the headset shows nothing | VR needs DXVK. Check `vulkaninfo --summary` shows Vulkan 1.3. ([why](#why-does-the-launcher-ignore-some-of-my-settings)) |
+| Controllers do nothing, and no hands show (Monado, WiVRn) | The mod doesn't support your controller type outside SteamVR yet. ([which ones](#which-headsets-and-distros-work)) |
 | A small white EA box stays on screen, or `install.sh` says the EA app is running | Run `tf2vr` once; it clears what older versions left behind. ([why](#why-does-the-launcher-manage-the-ea-app)) |
 | `Another mod replaced DirectX files` | Remove `dxgi.dll` and `d3d11.dll` (ReShade and similar) from the game folder. |
 | `write dump: Invalid parameter` | Harmless; look for the real cause in the logs below. ([why](#what-does-write-dump-invalid-parameter-mean)) |
@@ -197,6 +198,7 @@ Tested on PikaOS (Debian sid) on Wayland, with an NVIDIA GPU, a Valve Index, Ste
 - **Other distros:** anything x86_64 with **glibc 2.38 or newer** should work: Ubuntu 24.04+, Linux Mint 22+, Pop!_OS 24.04+, Debian 13+, Fedora 39+, and current Arch and its derivatives (see the [Arch notes](#arch-cachyos-and-other-arch-based-distros)). Steam runs Proton inside its own runtime, which brings a newer glibc, but these scripts run Proton outside it, so your system's glibc has to be new enough. Ubuntu 22.04, Mint 21 and Pop!_OS 22.04 (2.35) and Debian 12 (2.36) are too old. `install.sh` checks this.
 - **Untested:** SteamOS on x86 (Steam Deck), Flatpak Steam (`~/.var/app/com.valvesoftware.Steam/.local/share/Steam`), and EA-app copies through Faugus, Heroic, Lutris or Bottles.
 - **Two GPUs:** the game has to render on a GPU that has a monitor attached, and it has to be the same GPU your VR runtime uses.
+- **Controllers on Monado and WiVRn:** the mod has full input bindings only for **Valve Index** and **Oculus/Meta Touch** controllers, plus OpenXR's generic profile (hand position, select and menu only). SteamVR remaps any controller onto those, so on SteamVR everything works. Monado and WiVRn don't remap, so Vive wands, WMR controllers and others may get no input in the game ([#2](https://github.com/Monkellie/tf2vr-linux/issues/2)). Adding them needs a change in the mod itself; tell CircuitLord on the [mod's Discord](https://discord.gg/MTKwud2cCP).
 
 Reports welcome.
 
