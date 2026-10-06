@@ -33,14 +33,14 @@ Play [CircuitLord's Titanfall 2 VR mod](https://github.com/CircuitLord/CircuitLo
 
 If you own Titanfall 2 on the EA app and run it with Proton through Faugus, Heroic, Lutris or Bottles, nothing here needs Steam:
 
-1. **In your launcher, install the EA app and Titanfall 2 in the same Wine prefix,** sign in, and start the game once the normal way. Then quit.
+1. **In your launcher, install the EA app and sign in, then install Titanfall 2 with it** (on any drive, an SD card included) and start the game once the normal way. Then quit.
 2. **Run the installer:**
    ```sh
    git clone https://github.com/Monkellie/tf2vr-linux.git
    cd tf2vr-linux
    ./install.sh
    ```
-   It finds Titanfall 2 in Faugus (`~/Faugus`), Heroic and Lutris (`~/Games`), Bottles and `~/.wine` prefixes, and in Steam prefixes if you added the EA app to Steam as a non-Steam game. If it finds none or several, point it at yours: `./install.sh --game /path/to/Titanfall2 --prefix /path/to/prefix`.
+   It looks through the Wine prefixes of Faugus (`~/Faugus`), Heroic and Lutris (`~/Games`), Bottles and `~/.wine`, and through Steam's `compatdata` if you added the EA app to Steam as a non-Steam game. It reads where the EA app installed Titanfall 2 from each prefix's registry, so it also finds the game on another drive or an SD card. If it finds none or several, point it at yours: `./install.sh --game /path/to/Titanfall2 --prefix /path/to/prefix`.
    If you have no compatible Proton installed, it downloads [GE-Proton11-1](https://github.com/GloriousEggroll/proton-ge-custom/releases/tag/GE-Proton11-1) (about 530 MB, checked against its published checksum) and builds Proton-TF2VR from it, in `~/.local/share/Steam/compatibilitytools.d`.
 3. **In your launcher, set the EA app's (and Titanfall 2's) Proton to Proton-TF2VR,** so the normal game and VR use the same Wine. If it isn't listed, choose that folder as a custom Proton.
 4. **Play with `tf2vr`**, as below. In Heroic you can also add `~/.local/bin/tf2vr` as a native Linux app.
@@ -88,6 +88,7 @@ Switch Titanfall 2 back to your old Proton in Steam (Properties → Compatibilit
 | Discord shows SteamVR instead of Titanfall 2 | [Update](#update) to the latest scripts. ([why](#why-does-discord-show-steamvr-instead-of-titanfall-2)) |
 | Steam isn't found | Run `STEAM_DIR=/path/to/Steam ./install.sh`. |
 | `install.sh`: `Titanfall 2 not found` or `installed in more than one place` | Point it at your copy: `./install.sh --game /path/to/Titanfall2 --prefix /path/to/prefix`. ([without Steam](#without-steam-ea-app)) |
+| Which Wine prefix is mine? | The one the EA app is installed in. `install.sh` lists those it finds. To find it yourself: `grep -l Respawn ~/.local/share/Steam/steamapps/compatdata/*/pfx/system.reg` (for a non-Steam game in Steam; add your other Steam libraries' `compatdata` paths) prints `…/compatdata/<number>/pfx/system.reg`, and `…/compatdata/<number>` is the prefix. |
 | `install.sh`: `The audio fix doesn't match` | That Proton build compiles the audio code differently. Leave out `--proton-base`, and `install.sh` uses Proton Experimental or GE-Proton11-1. ([why](#why-does-it-need-its-own-copy-of-proton)) |
 | `Proton's Wine can't run directly on this system` | You're on an ARM device. ([see here](#can-i-play-on-a-steam-frame-or-other-arm-device)) |
 | `install.sh`: `glibc … is too old` | Your distro release is too old for the current Proton. Upgrade to one with glibc 2.38 or newer. ([which ones](#which-headsets-and-distros-work)) |
@@ -194,7 +195,7 @@ Tested on PikaOS (Debian sid) on Wayland, with an NVIDIA GPU, a Valve Index, Ste
 
 - **Other headsets:** polar421 has played the campaign on a Quest 3S through WiVRn with a similar setup. With these scripts, a tethered WiVRn user has got as far as the mod finding the headset and controllers.
 - **Other distros:** anything x86_64 with **glibc 2.38 or newer** should work: Ubuntu 24.04+, Linux Mint 22+, Pop!_OS 24.04+, Debian 13+, Fedora 39+, and current Arch and its derivatives (see the [Arch notes](#arch-cachyos-and-other-arch-based-distros)). Steam runs Proton inside its own runtime, which brings a newer glibc, but these scripts run Proton outside it, so your system's glibc has to be new enough. Ubuntu 22.04, Mint 21 and Pop!_OS 22.04 (2.35) and Debian 12 (2.36) are too old. `install.sh` checks this.
-- **Untested:** SteamOS on x86, Flatpak Steam (`~/.var/app/com.valvesoftware.Steam/.local/share/Steam`), and EA-app copies through Faugus, Heroic, Lutris or Bottles.
+- **Untested:** SteamOS on x86 (Steam Deck), Flatpak Steam (`~/.var/app/com.valvesoftware.Steam/.local/share/Steam`), and EA-app copies through Faugus, Heroic, Lutris or Bottles.
 - **Two GPUs:** the game has to render on a GPU that has a monitor attached, and it has to be the same GPU your VR runtime uses.
 
 Reports welcome.

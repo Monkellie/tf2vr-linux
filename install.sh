@@ -98,39 +98,144 @@ compat_root() {
   if [ "$(basename "$1")" = pfx ] && [ -d "$1/drive_c" ]; then dirname "$1"; else printf '%s\n' "$1"; fi
 }
 
-ea_candidates() {
+prefix_registries() {
   local root lib
   for root in "$HOME/Faugus" "$HOME/Games" "${XDG_DATA_HOME:-$HOME/.local/share}/bottles/bottles" \
               "$HOME/.var/app/com.usebottles.bottles/data/bottles/bottles" "$HOME/.wine"; do
-    [ -d "$root" ] && find "$root" -maxdepth 10 -type f -name Titanfall2.exe -path '*/drive_c/*' 2>/dev/null
+    [ -d "$root" ] && find "$root" -maxdepth 7 -type f -name system.reg 2>/dev/null
   done
   while IFS= read -r lib; do
-    [ -d "$lib/steamapps/compatdata" ] && find "$lib/steamapps/compatdata" -mindepth 1 -maxdepth 8 \
-      -path "$lib/steamapps/compatdata/$APPID" -prune -o -type f -name Titanfall2.exe -path '*/drive_c/*' -print 2>/dev/null
+    [ -d "$lib/steamapps/compatdata" ] && find "$lib/steamapps/compatdata" -mindepth 2 -maxdepth 3 -type f -name system.reg \
+      -not -path "$lib/steamapps/compatdata/$APPID/*" 2>/dev/null
   done < <(libraries)
+  [ -n "$OPT_PREFIX" ] && find "$OPT_PREFIX/" -maxdepth 2 -type f -name system.reg 2>/dev/null
+  return 0
+}
+
+registry_installs() {
+  python3 - "$@" <<'PY'
+import os, re, sys
+
+KEY = re.compile(r'^\[Software\\\\(?:Wow6432Node\\\\)?Respawn\\\\Titanfall2\][^\n]*\n(.*?)(?=^\[|\Z)', re.M | re.S | re.I)
+VALUE = re.compile(r'^"Install Dir"="((?:[^"\\]|\\.)*)"', re.M | re.I)
+
+def unescape(text):
+    def one(m):
+        t = m.group(1)
+        if t[0] in 'xX' and len(t) > 1:
+            return chr(int(t[1:], 16))
+        return {'n': '\n', 't': '\t', '0': '\0'}.get(t, t)
+    return re.sub(r'\\([xX][0-9a-fA-F]{1,4}|.)', one, text)
+
+def nocase(path):
+    if os.path.exists(path):
+        return path
+    cur = '/'
+    for part in [x for x in path.split('/') if x]:
+        nxt = os.path.join(cur, part)
+        if not os.path.exists(nxt):
+            try:
+                match = [e for e in os.listdir(cur) if e.lower() == part.lower()]
+            except OSError:
+                return None
+            if not match:
+                return None
+            nxt = os.path.join(cur, match[0])
+        cur = nxt
+    return cur
+
+def to_linux(pfx, winpath):
+    m = re.match(r'^([A-Za-z]):[\\/]*(.*)$', winpath)
+    if not m:
+        return None
+    letter, rest = m.group(1).lower(), m.group(2).replace('\\', '/').strip('/')
+    link = os.path.join(pfx, 'dosdevices', letter + ':')
+    if os.path.lexists(link):
+        base = os.path.realpath(link)
+    elif letter == 'z':
+        base = '/'
+    else:
+        return None
+    return nocase(os.path.join(base, rest))
+
+for reg in sys.argv[1:]:
+    pfx = os.path.dirname(reg)
+    compat = os.path.dirname(pfx) if os.path.basename(pfx) == 'pfx' else pfx
+    compat = os.path.realpath(compat)
+    if os.path.isdir(os.path.join(pfx, 'drive_c', 'Program Files', 'Electronic Arts', 'EA Desktop')):
+        print(f'E\t{compat}')
+    try:
+        data = open(reg, 'rb').read()
+    except OSError:
+        continue
+    if b'Respawn\\\\Titanfall2' not in data:
+        continue
+    for section in KEY.finditer(data.decode('utf-8', 'replace')):
+        value = VALUE.search(section.group(1))
+        if not value:
+            continue
+        game = to_linux(pfx, unescape(value.group(1)))
+        if game and os.path.isdir(game) and any(e.lower() == 'titanfall2.exe' for e in os.listdir(game)):
+            print(f'G\t{os.path.realpath(game)}\t{compat}')
+PY
+}
+
+drive_c_installs() {
+  local root lib exe game
+  {
+    for root in "$HOME/Faugus" "$HOME/Games" "${XDG_DATA_HOME:-$HOME/.local/share}/bottles/bottles" \
+                "$HOME/.var/app/com.usebottles.bottles/data/bottles/bottles" "$HOME/.wine"; do
+      [ -d "$root" ] && find "$root" -maxdepth 10 -type f -name Titanfall2.exe -path '*/drive_c/*' 2>/dev/null
+    done
+    while IFS= read -r lib; do
+      [ -d "$lib/steamapps/compatdata" ] && find "$lib/steamapps/compatdata" -mindepth 1 -maxdepth 8 \
+        -path "$lib/steamapps/compatdata/$APPID" -prune -o -type f -name Titanfall2.exe -path '*/drive_c/*' -print 2>/dev/null
+    done < <(libraries)
+    [ -n "$OPT_PREFIX" ] && find "$OPT_PREFIX/" -maxdepth 8 -type f -name Titanfall2.exe -path '*/drive_c/*' 2>/dev/null
+  } | while IFS= read -r exe; do
+    game=$(dirname "$exe")
+    printf 'G\t%s\t%s\n' "$(readlink -f "$game")" "$(readlink -f "$(compat_root "${game%%/drive_c/*}")")"
+  done
 }
 
 discover_ea() {
-  local hits=() h
+  local regs=() kind g c want
+  local -a pairs=()
   [ -n "$OPT_GAME" ] && GAME=$OPT_GAME
   [ -n "$OPT_PREFIX" ] && PREFIX=$(compat_root "$OPT_PREFIX")
-  if [ -z "$GAME" ]; then
-    if [ -n "$OPT_PREFIX" ]; then
-      mapfile -t hits < <(find "$OPT_PREFIX/" -maxdepth 8 -type f -name Titanfall2.exe -path '*/drive_c/*' 2>/dev/null)
-    else
-      mapfile -t hits < <(ea_candidates | awk '!seen[$0]++')
-    fi
-    for h in "${hits[@]}"; do EA_HITS+=("$(dirname "$h")"); done
+  mapfile -t regs < <(prefix_registries | awk '!seen[$0]++')
+  while IFS=$'\t' read -r kind g c; do
+    case "$kind" in
+      G) pairs+=("$g"$'\t'"$c") ;;
+      E) EA_PREFIXES+=("$g") ;;
+    esac
+  done < <({ [ "${#regs[@]}" -gt 0 ] && registry_installs "${regs[@]}"; drive_c_installs; } | awk '!seen[$0]++')
+  if [ -n "$GAME" ] && [ -z "$PREFIX" ]; then
+    want=$(readlink -f "$GAME")
+    for g in "${pairs[@]}"; do
+      [ "${g%%$'\t'*}" = "$want" ] && { PREFIX=${g#*$'\t'}; FOUND_VIA=" (its prefix found through the EA app's registry)"; break; }
+    done
+  elif [ -z "$GAME" ] && [ -n "$PREFIX" ]; then
+    want=$(readlink -f "$PREFIX")
+    for g in "${pairs[@]}"; do
+      [ "${g#*$'\t'}" = "$want" ] && { EA_HITS+=("${g%%$'\t'*}"); }
+    done
     [ "${#EA_HITS[@]}" = 1 ] && GAME=${EA_HITS[0]}
+  elif [ -z "$GAME" ]; then
+    for g in "${pairs[@]}"; do EA_HITS+=("${g%%$'\t'*}  (prefix: ${g#*$'\t'})"); done
+    if [ "${#pairs[@]}" = 1 ]; then
+      GAME=${pairs[0]%%$'\t'*} PREFIX=${pairs[0]#*$'\t'}
+    fi
   fi
-  if [ -z "$PREFIX" ] && [ -n "$GAME" ]; then
+  if [ -n "$GAME" ] && [ -z "$PREFIX" ]; then
     case "$GAME" in */drive_c/*) PREFIX=$(compat_root "${GAME%%/drive_c/*}") ;; esac
   fi
+  return 0
 }
 
 discover() {
   STEAM=$(find_steam) || STEAM=""
-  GAME="" PREFIX="" EXPERIMENTAL="" GAME_SOURCE=steam EA_HITS=()
+  GAME="" PREFIX="" EXPERIMENTAL="" GAME_SOURCE=steam EA_HITS=() EA_PREFIXES=() FOUND_VIA=""
   local lib
   while IFS= read -r lib; do
     if [ -z "$GAME" ] && [ -f "$lib/steamapps/common/Titanfall2/Titanfall2.exe" ]; then
@@ -266,6 +371,12 @@ glibc_check() {
   fi
 }
 
+ea_prefix_hint() {
+  [ "${#EA_PREFIXES[@]}" -gt 0 ] || return 0
+  echo "          Wine prefixes with the EA app installed:"
+  printf '            %s\n' "${EA_PREFIXES[@]}"
+}
+
 preflight() {
   echo "Preflight:"
   local t
@@ -295,12 +406,13 @@ preflight() {
     fi
   else
     if [ -n "$GAME" ]; then
-      ok "Titanfall 2 (EA app): $GAME"
+      ok "Titanfall 2 (EA app): $GAME$FOUND_VIA"
     elif [ "${#EA_HITS[@]}" -gt 1 ]; then
       fail "Titanfall 2 is installed in more than one place - pick one with --game DIR --prefix DIR:"
       printf '          %s\n' "${EA_HITS[@]}"
     else
-      fail "Titanfall 2 not found on Steam or in a Faugus, Heroic, Lutris or Bottles prefix - point at it: ./install.sh --game DIR --prefix DIR"
+      fail "Titanfall 2 not found on Steam or in a Faugus, Heroic, Lutris, Bottles or non-Steam-game prefix - point at it: ./install.sh --game DIR --prefix DIR"
+      ea_prefix_hint
     fi
     if [ -n "$PREFIX" ] && { [ -d "$PREFIX/pfx/drive_c" ] || [ -d "$PREFIX/drive_c" ]; }; then
       ok "Wine prefix: $PREFIX"
@@ -308,6 +420,7 @@ preflight() {
       fail "$PREFIX isn't a Wine prefix (no drive_c in it)"
     elif [ -n "$GAME" ]; then
       fail "Couldn't tell which Wine prefix $GAME belongs to - add --prefix DIR (the prefix the EA app is installed in)"
+      ea_prefix_hint
     fi
   fi
   # "EA Desktop\EA Desktop" is a Wine reparse point Linux can't follow, so look in the versioned folders
