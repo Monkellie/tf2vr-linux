@@ -13,7 +13,11 @@ CONF="${XDG_CONFIG_HOME:-$HOME/.config}/tf2vr/paths.env"
 LOG_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/tf2vr"
 mkdir -p "$LOG_DIR"
 LOG="$LOG_DIR/launch.log"
-exec > >(tee "$LOG") 2>&1
+# Set when this script re-runs itself inside Steam's runtime container (see below)
+IN_RT=${TF2VRLINUX_IN_RUNTIME:-}
+unset TF2VRLINUX_IN_RUNTIME
+SELF=$(readlink -f "${BASH_SOURCE[0]}")
+[ -n "$IN_RT" ] || exec > >(tee "$LOG") 2>&1
 
 PROTON_LOG_FILE=""
 if [ "${1:-}" = "--proton-log" ]; then
@@ -47,19 +51,37 @@ for f in Titanfall2VRLauncher.exe TF2VR/Northstar.dll TF2VR/plugins/Titanfall2VR
 done
 [ -x "$PROTON_BIN" ] || die "$PROTON_BIN is missing - run install.sh again."
 
+# On distros whose glibc is too old for Proton (Ubuntu 22.04, Pop!_OS 22.04...), install.sh
+# records Steam's runtime container; Proton and its Wine then run inside it, as under Steam.
+RT=()
+if [ -n "${RT_RUN:-}" ] && [ -z "$IN_RT" ]; then
+  [ -x "$RT_RUN" ] || die "$RT_RUN is missing - Steam may have updated or moved the Steam Linux Runtime. Run install.sh again."
+  RT=("$RT_RUN" --)
+  # The container shares your home folder; share the game, prefix and Proton if they're elsewhere
+  rt_list="${PRESSURE_VESSEL_FILESYSTEMS_RW:-}"
+  for p in "$GAME_DIR" "$PREFIX_DIR" "$(dirname "$PROTON_BIN")"; do
+    p=$(readlink -f "$p")
+    case "$p/" in "$(readlink -f "$HOME")"/*) continue ;; esac
+    rt_list="${rt_list:+$rt_list:}$p"
+  done
+  [ -n "$rt_list" ] && export PRESSURE_VESSEL_FILESYSTEMS_RW="$rt_list"
+fi
+
 # Mods that drop their own DirectX next to the game take Present away from VR rendering
 for f in "$G"/{,bin/x64_retail/}{dxgi,d3d11}.dll; do
   [ -f "$f" ] && die "Another mod replaced DirectX files, which breaks VR rendering. Remove $f and launch again."
 done
 
+if [ -z "$IN_RT" ]; then
 python3 - "$(dirname "$PROTON_BIN")/files/lib/wine/x86_64-windows/mmdevapi.dll" <<'PY' \
   || echo "WARNING: the mmdevapi.dll audio fix isn't applied - expect a 0xC0000409 crash. Run install.sh --refresh-proton."
 import sys
 data = open(sys.argv[1], "rb").read()
 sys.exit(0 if data[0x369E:0x369E + 6] == bytes.fromhex("0f843efdffff") else 1)
 PY
+fi
 
-if [ "$GAME_SOURCE" = steam ]; then
+if [ "$GAME_SOURCE" = steam ] && [ -z "$IN_RT" ]; then
   pgrep -x steam >/dev/null || die "Steam isn't running - start Steam first."
 fi
 
@@ -67,7 +89,9 @@ fi
 RUNTIME_JSON="${XDG_CONFIG_HOME:-$HOME/.config}/openxr/1/active_runtime.json"
 [ -f "$RUNTIME_JSON" ] || RUNTIME_JSON=/etc/xdg/openxr/1/active_runtime.json
 [ -f "$RUNTIME_JSON" ] || die "No OpenXR runtime is active. In SteamVR: Settings -> OpenXR -> Set SteamVR as OpenXR runtime."
-if grep -qiE 'steamvr|steamxr' "$(readlink -f "$RUNTIME_JSON")"; then
+if [ -n "$IN_RT" ]; then
+  :
+elif grep -qiE 'steamvr|steamxr' "$(readlink -f "$RUNTIME_JSON")"; then
   if ! pgrep -x vrserver >/dev/null; then
     command -v steam >/dev/null 2>&1 || die "SteamVR isn't running - start it, check the headset shows up, then launch again."
     echo "Starting SteamVR..."
@@ -78,6 +102,40 @@ if grep -qiE 'steamvr|steamxr' "$(readlink -f "$RUNTIME_JSON")"; then
   fi
 else
   echo "OpenXR runtime: $(readlink -f "$RUNTIME_JSON") - make sure it's running and the headset is connected."
+fi
+
+# On distros whose glibc is too old, everything from here on runs inside ONE container. A Wine
+# session can't be shared across containers (or with Steam's own): a process joining it from
+# another one dies at server_init_process_done. So first close whatever still runs in this
+# prefix - the EA app from a normal Steam launch, or a failed earlier session.
+if [ "${#RT[@]}" -gt 0 ]; then
+  pfx_env_pids() {
+    local p
+    for p in /proc/[0-9]*; do
+      [ "${p#/proc/}" = "$$" ] && continue
+      grep -qzxF -e "WINEPREFIX=$PREFIX_DIR/pfx" -e "WINEPREFIX=$PREFIX_DIR/pfx/" \
+        -e "WINEPREFIX=$(readlink -f "$PREFIX_DIR/pfx")" -e "WINEPREFIX=$(readlink -f "$PREFIX_DIR/pfx")/" \
+        "$p/environ" 2>/dev/null && echo "${p#/proc/}"
+    done
+  }
+  stale=$(pfx_env_pids)
+  if [ -n "$stale" ]; then
+    echo "Closing Wine processes still running in Titanfall 2's prefix (EA app or an earlier session)..."
+    # shellcheck disable=SC2086
+    kill -TERM $stale 2>/dev/null
+    for _ in $(seq 1 10); do [ -z "$(pfx_env_pids)" ] && break; sleep 0.5; done
+    stale=$(pfx_env_pids)
+    # shellcheck disable=SC2086
+    [ -n "$stale" ] && kill -KILL $stale 2>/dev/null
+    sleep 1
+  fi
+  echo "Running the EA app and the game inside Steam's runtime container ($(basename "$(dirname "$RT_RUN")"))"
+  export TF2VRLINUX_IN_RUNTIME=1
+  if [ -n "$PROTON_LOG_FILE" ]; then
+    exec "${RT[@]}" bash "$SELF" --proton-log "$@"
+  else
+    exec "${RT[@]}" bash "$SELF" "$@"
+  fi
 fi
 
 # Same environment the Windows installer gives the game

@@ -38,6 +38,9 @@ GE_URL="https://github.com/GloriousEggroll/proton-ge-custom/releases/download/$G
 GE_SHA="ce6dd663ea01725a31805ed5c165723a253cdf0945a6642907330742ae2de5e4"
 STEAM_OFFER="Origin.OFR.50.0001456"
 NO_STEAM_DIR="$STATE/no-steam"
+# Set by glibc_check when the system glibc is too old for Proton: Proton and its Wine then run
+# inside the Steam Linux Runtime container Steam itself would use ("$RT_RUN" -- command...).
+RT_RUN="" RT_APPID="" RT=()
 
 RUN_CMD=tf2vr
 MODE=install
@@ -364,11 +367,50 @@ glibc_check() {
   need=${need#GLIBC_}
   have=$(getconf GNU_LIBC_VERSION 2>/dev/null | awk '{ print $2 }' || true)
   [ -n "$need" ] && [ -n "$have" ] || return 0
+  RT_RUN="" RT=()
+  RT_APPID=$(sed -n 's/.*"require_tool_appid"[[:space:]]*"\([0-9]*\)".*/\1/p' "$dir/toolmanifest.vdf" 2>/dev/null | head -n 1)
   if [ "$(printf '%s\n%s\n' "$need" "$have" | sort -V | head -n 1)" = "$need" ]; then
     ok "glibc $have (Proton needs $need)"
+  elif RT_RUN=$(runtime_run_for "$RT_APPID"); then
+    RT=("$RT_RUN" --)
+    ok "glibc $have is older than the $need Proton needs, so Proton will run inside Steam's runtime container ($(basename "$(dirname "$RT_RUN")"))"
   else
-    fail "glibc $have is too old: Proton $(cut -d' ' -f2 "$dir/version") needs $need or newer outside Steam (Ubuntu 22.04, Mint 21 and Pop!_OS 22.04 have 2.35, Debian 12 has 2.36). A newer distro release is needed, e.g. Ubuntu 24.04, Mint 22 or Debian 13."
+    RT_RUN=""
+    fail "glibc $have is too old: Proton $(cut -d' ' -f2 "$dir/version") needs $need or newer outside Steam (Ubuntu 22.04, Mint 21 and Pop!_OS 22.04 have 2.35, Debian 12 has 2.36), and the Steam Linux Runtime it runs in wasn't found${RT_APPID:+ - install it with: steam steam://install/$RT_APPID, then run install.sh again}. Otherwise a newer distro release is needed, e.g. Ubuntu 24.04, Mint 22 or Debian 13."
   fi
+}
+
+# Steam runs Proton inside the Steam Linux Runtime named in its toolmanifest.vdf (Proton 11:
+# "Steam Linux Runtime 4.0", app 4183110), which brings a newer glibc than older distros have.
+# runtime_run_for <app ID>: prints that runtime's `run` script, which runs a command inside the
+# same container.
+runtime_run_for() {
+  local lib name
+  [ -n "$1" ] || return 1
+  while IFS= read -r lib; do
+    name=$(sed -n 's/^[[:space:]]*"installdir"[[:space:]]*"\(.*\)"[[:space:]]*$/\1/p' "$lib/steamapps/appmanifest_$1.acf" 2>/dev/null | head -n 1)
+    if [ -n "$name" ] && [ -x "$lib/steamapps/common/$name/run" ]; then
+      printf '%s\n' "$lib/steamapps/common/$name/run"
+      return 0
+    fi
+  done < <(libraries)
+  return 1
+}
+
+# The runtime container shares your home folder; other folders the game, prefix or Proton live in
+# have to be shared explicitly.
+rt_share() {
+  [ -n "$RT_RUN" ] || return 0
+  local p list="${PRESSURE_VESSEL_FILESYSTEMS_RW:-}"
+  for p in "$@"; do
+    [ -n "$p" ] || continue
+    p=$(readlink -f "$p")
+    case "$p/" in "$(readlink -f "$HOME")"/*) continue ;; esac
+    case ":$list:" in *":$p:"*) continue ;; esac
+    list="${list:+$list:}$p"
+  done
+  [ -n "$list" ] && export PRESSURE_VESSEL_FILESYSTEMS_RW="$list"
+  return 0
 }
 
 ea_prefix_hint() {
@@ -637,11 +679,13 @@ compat_client_dir() {
 }
 
 run_in_prefix() {
-  STEAM_COMPAT_CLIENT_INSTALL_PATH="$(compat_client_dir)" STEAM_COMPAT_DATA_PATH="$PREFIX" "$PROTON" "$@"
+  rt_share "$GAME" "$PREFIX" "$TOOL" "$CACHE"
+  STEAM_COMPAT_CLIENT_INSTALL_PATH="$(compat_client_dir)" STEAM_COMPAT_DATA_PATH="$PREFIX" "${RT[@]}" "$PROTON" "$@"
 }
 
 stop_prefix() {
-  WINEPREFIX="$PFX" "$TOOL/files/bin/wineserver" -k 2>/dev/null || true
+  rt_share "$PREFIX" "$TOOL"
+  WINEPREFIX="$PFX" "${RT[@]}" "$TOOL/files/bin/wineserver" -k 2>/dev/null || true
 }
 
 ensure_pfx_layout() {
@@ -657,7 +701,9 @@ ensure_pfx_layout() {
 # Everything after this runs Windows programs through Proton-TF2VR directly (outside Steam), which
 # needs Proton's x86_64 Wine to start on this machine.
 check_wine_runs() {
-  "$TOOL/files/bin/wine" --version >/dev/null 2>&1 && return 0
+  rt_share "$TOOL"
+  "${RT[@]}" "$TOOL/files/bin/wine" --version >/dev/null 2>&1 && return 0
+  [ -n "$RT_RUN" ] && die "Proton's Wine didn't start inside Steam's runtime container ($RT_RUN): $("${RT[@]}" "$TOOL/files/bin/wine" --version 2>&1 | tail -n 3)"
   die "Proton's Wine can't run directly on this system ($(uname -m)): $("$TOOL/files/bin/wine" --version 2>&1 | head -n 1)
 These scripts start Proton outside Steam, which only works on x86_64 Linux PCs. Nothing has been
 installed into the game yet. On a Steam Frame or other ARM headset, run the game on a PC and stream it
@@ -806,6 +852,7 @@ install_launcher() {
     echo "# written by tf2vr-linux/install.sh"
     printf 'STEAM_ROOT=%q\nGAME_DIR=%q\nPREFIX_DIR=%q\nPROTON_BIN=%q\n' "$STEAM" "$GAME" "$PREFIX" "$PROTON"
     printf 'GAME_SOURCE=%q\nNO_STEAM_DIR=%q\n' "$GAME_SOURCE" "$NO_STEAM_DIR"
+    printf 'RT_RUN=%q\n' "$RT_RUN"
     if [ "$GAME_SOURCE" = steam ]; then printf 'CONTENT_ID=%q\n' "$STEAM_OFFER"; else echo "CONTENT_ID="; fi
   } > "$CONF"
   ok "$CONF"
