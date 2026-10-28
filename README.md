@@ -63,6 +63,23 @@ git pull
 ./install.sh
 ```
 
+## Choose a version
+
+`./install.sh` asks which mod version to install, and Enter keeps the one you picked last time:
+
+- **latest**: the current release, and new releases when you update. This is the default.
+- **beta**: CircuitLord's beta. Like the official installer, you get the release instead whenever it's newer than the beta.
+- **a specific version**, e.g. `1.0.24`, to stay on it (beta builds are listed as `beta-1.0.22`). Updating keeps that version until you pick another.
+
+Without the question, e.g. from a script:
+
+```sh
+./install.sh --version latest     # or beta, or 1.0.24
+./install.sh --list-versions      # what can be installed
+```
+
+Older versions are offered for as long as CircuitLord keeps them on GitHub.
+
 ## Uninstall
 
 Switch Titanfall 2 back to your old Proton in Steam (Properties → Compatibility), or in your launcher without Steam, then run `./install.sh --uninstall`. Your VR campaign saves are kept.
@@ -107,7 +124,7 @@ Switch Titanfall 2 back to your old Proton in Steam (Properties → Compatibilit
 ### What does `install.sh` actually do?
 
 It follows the official installer (`Titanfall2Installer.cs`) step by step:
-- It reads the current mod release from CircuitLord's `manifest-v3.json`, and the Northstar version the official installer pins at that release.
+- It reads the mod releases and release channels (like beta) from CircuitLord's `manifest-v3.json`, and older versions from the `mod-packages` release on CircuitLord's GitHub, with their SHA-256 checksums. It reads the Northstar version from the official installer's pin at the current release.
 - It downloads both and checks their SHA-256 checksums.
 - It runs the mod's own `asset_patcher.exe` under Proton, which builds the mod's game assets from your game files, then checks every file it built.
 - It lays the files out the same way: Northstar and the mod in `Titanfall2/TF2VR`, and `Titanfall2VRLauncher.exe` next to the game. `Titanfall2.exe` is never touched.
@@ -118,7 +135,7 @@ On top of that, it:
 - adds the `tf2vr` command in `~/.local/bin` and the Titanfall 2 VR app-menu entry
 - adds `~/.local/share/tf2vr/discord-presence.py`, which the launcher uses to set your [Discord status](#why-does-discord-show-steamvr-instead-of-titanfall-2)
 
-`./install.sh --check` runs only the checks and changes nothing. When you update, it installs a new mod release if there is one, and removes files the old version used that the new one doesn't. `./install.sh --force` reinstalls from scratch.
+`./install.sh --check` runs only the checks and changes nothing. When you update, it installs a new mod release if there is one (unless you [chose a version](#choose-a-version) to stay on), and removes files the old version used that the new one doesn't. `./install.sh --force` reinstalls from scratch.
 
 ### Why does it need its own copy of Proton?
 

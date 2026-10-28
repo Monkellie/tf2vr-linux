@@ -7,6 +7,12 @@
 #   ./install.sh --refresh-proton rebuild Proton-TF2VR from the newest compatible Proton build
 #   ./install.sh --uninstall      remove the mod files, launcher and Proton-TF2VR (campaign saves are kept)
 #
+# Mod version: an interactive run asks which one to install (Enter keeps your last choice).
+#   ./install.sh --version latest   the current release (default)
+#   ./install.sh --version beta     CircuitLord's beta, or the release when that is newer
+#   ./install.sh --version 1.0.24   stay on one version (beta builds: beta-1.0.22)
+#   ./install.sh --list-versions    show what can be installed
+#
 # Titanfall 2 from the EA app (Faugus, Heroic, Lutris, Bottles...) instead of Steam is found
 # automatically, or point at it:
 #   ./install.sh --game DIR       the folder with Titanfall2.exe
@@ -23,6 +29,7 @@ HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 
 REPO_RAW="https://raw.githubusercontent.com/CircuitLord/CircuitLordVRModInstaller"
 MANIFEST_URL="$REPO_RAW/main/manifest-v3.json"
+PACKAGES_API="https://api.github.com/repos/CircuitLord/CircuitLordVRModInstaller/releases/tags/mod-packages"
 APPID=1237970
 TOOL_NAME="Proton-TF2VR"
 MMDEVAPI="files/lib/wine/x86_64-windows/mmdevapi.dll"
@@ -46,12 +53,18 @@ REFRESH_PROTON=0
 OPT_GAME=""
 OPT_PREFIX=""
 OPT_BASE=""
+OPT_VERSION=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --check)          MODE=check ;;
     --uninstall)      MODE=uninstall ;;
     --force)          FORCE=1 ;;
     --refresh-proton) REFRESH_PROTON=1 ;;
+    --list-versions)  MODE=list ;;
+    --version)
+      [ $# -ge 2 ] && [ -n "$2" ] || { echo "install.sh: --version needs latest, beta or a version number" >&2; exit 2; }
+      OPT_VERSION=$2
+      shift ;;
     --game|--prefix|--proton-base)
       [ $# -ge 2 ] || { echo "install.sh: $1 needs a folder" >&2; exit 2; }
       [ -d "$2" ] || { echo "install.sh: $1: '$2' isn't a folder" >&2; exit 2; }
@@ -463,7 +476,7 @@ preflight() {
     warn "No active OpenXR runtime - in SteamVR: Settings -> OpenXR -> Set SteamVR as OpenXR runtime"
   fi
 
-  if [ -f "$STATE/version" ]; then ok "Installed: $(cat "$STATE/version")"; else ok "Mod not installed yet"; fi
+  if [ -f "$STATE/version" ]; then ok "Installed: $(cat "$STATE/version") (chosen: $(cat "$STATE/selection" 2>/dev/null || echo latest))"; else ok "Mod not installed yet"; fi
 }
 
 # ------------------------------------------------------- Proton-TF2VR --
@@ -702,27 +715,169 @@ place_tree() {
   done < <(find "$1" -type f -print0 | sort -z)
 }
 
+release_catalogue() {
+  python3 - "$1" "$2" "$(cat "$STATE/version" 2>/dev/null || true)" <<'PY'
+import json, re, sys
+m = json.load(open(sys.argv[1]))["titanfall2vr"]
+try:
+    assets = json.load(open(sys.argv[2]))["assets"]
+except Exception:
+    assets = []
+installed = sys.argv[3]
+vkey = lambda v: tuple(int(x) for x in re.findall(r"\d+", v))
+dates = {c["version"]: c.get("date") for c in m.get("changes") or []}
+channels = m.get("channels") or []
+
+def row(kind, name, version, channel, url, sha, info):
+    mod = f"mod={version}" + (f" {channel}" if channel else "")
+    mark = "installed" if installed.startswith(mod + " northstar=") else "-"
+    print("\t".join([kind, name, version, channel or "-", url, sha, info or "-", mark]))
+
+row("track", "latest", m["version"], None, m["url"], m["sha256"], dates.get(m["version"]))
+for c in channels:
+    if vkey(c["version"]) > vkey(m["version"]):
+        row("track", c["id"], c["version"], c["id"], c["url"], c["sha256"], c.get("description"))
+    else:
+        row("track", c["id"], m["version"], None, m["url"], m["sha256"],
+            f"{c['id']} {c['version']} isn't newer than the release, so this is the release")
+
+specific = {}
+def add(channel, version, url, sha):
+    specific.setdefault(f"{channel}-{version}" if channel else version, (channel, version, url, sha))
+pattern = re.compile(r"Titanfall2VR-(?:(.+)-)?(\d+(?:\.\d+)+)\.zip")
+for a in assets:
+    hit = pattern.fullmatch(a.get("name", ""))
+    digest = a.get("digest") or ""
+    if hit and digest.startswith("sha256:"):
+        add(hit[1], hit[2], a["browser_download_url"], digest[7:])
+add(None, m["version"], m["url"], m["sha256"])
+for c in channels:
+    add(c["id"], c["version"], c["url"], c["sha256"])
+for name, (channel, version, url, sha) in sorted(specific.items(), key=lambda kv: (vkey(kv[1][1]), kv[1][0] is None), reverse=True):
+    row("pin", name, version, channel, url, sha, f"{channel} build" if channel else dates.get(version))
+PY
+}
+
+load_catalogue() {
+  mkdir -p "$CACHE"
+  local manifest="$CACHE/manifest-v3.json" packages="$CACHE/mod-packages.json"
+  curl -fsSL -o "$manifest" "$MANIFEST_URL?t=$(date +%s)" || die "couldn't download $MANIFEST_URL"
+  PACKAGES_OK=true
+  if ! curl -fsSL -o "$packages" "$PACKAGES_API" 2>/dev/null; then
+    PACKAGES_OK=false
+    : > "$packages"
+    warn "couldn't get the list of older versions from GitHub (try again later), only the current ones are offered"
+  fi
+  COMMIT=$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["installer"]["commit"])' "$manifest" 2>/dev/null) \
+    || die "couldn't read $MANIFEST_URL"
+  CAT_KIND=() CAT_NAME=() CAT_VERSION=() CAT_CHANNEL=() CAT_URL=() CAT_SHA=() CAT_INFO=() CAT_MARK=()
+  local kind name version channel url sha info mark
+  while IFS=$'\t' read -r kind name version channel url sha info mark; do
+    CAT_KIND+=("$kind") CAT_NAME+=("$name") CAT_VERSION+=("$version") CAT_CHANNEL+=("$channel")
+    CAT_URL+=("$url") CAT_SHA+=("$sha") CAT_INFO+=("$info") CAT_MARK+=("$mark")
+  done < <(release_catalogue "$manifest" "$packages")
+  [ "${#CAT_NAME[@]}" -gt 0 ] || die "couldn't read the Titanfall 2 VR entry from $MANIFEST_URL"
+}
+
+catalogue_index() {
+  local i
+  for i in "${!CAT_NAME[@]}"; do
+    [ "${CAT_NAME[i]}" = "$1" ] && { echo "$i"; return 0; }
+  done
+  [ "${2:-}" = typed ] || return 1
+  for i in "${!CAT_NAME[@]}"; do
+    [ "${CAT_KIND[i]}" = pin ] && [ "${CAT_VERSION[i]}" = "$1" ] && { echo "$i"; return 0; }
+  done
+  return 1
+}
+
+print_catalogue() {
+  local i info mark kind="" width=0
+  for i in "${!CAT_NAME[@]}"; do
+    [ "${#CAT_NAME[i]}" -gt "$width" ] && width=${#CAT_NAME[i]}
+  done
+  for i in "${!CAT_NAME[@]}"; do
+    if [ "${CAT_KIND[i]}" != "$kind" ]; then
+      kind=${CAT_KIND[i]}
+      if [ "$kind" = track ]; then echo "  Follow updates:"; else echo "  Stay on one version:"; fi
+    fi
+    info=${CAT_INFO[i]}
+    [ "$info" = - ] && info=""
+    mark=""
+    [ "${CAT_MARK[i]}" = installed ] && mark="$mark  [installed]"
+    [ "${CAT_NAME[i]}" = "$1" ] && mark="$mark  <- your choice"
+    printf '  %3d) %-*s  %-8s %s%s\n' $((i + 1)) "$width" "${CAT_NAME[i]}" "${CAT_VERSION[i]}" "$info" "$mark"
+  done
+}
+
+list_versions() {
+  echo "Titanfall 2 VR versions:"
+  load_catalogue
+  print_catalogue "$(cat "$STATE/selection" 2>/dev/null || echo latest)"
+  echo
+  echo "Install one with:  ./install.sh --version NAME   (or just ./install.sh to pick from this list)"
+}
+
+choose_release() {
+  echo
+  echo "Mod version:"
+  load_catalogue
+  local saved choice reply i ask=false
+  [ -z "$OPT_VERSION" ] && [ -t 0 ] && [ -t 1 ] && ask=true
+  saved=$(cat "$STATE/selection" 2>/dev/null || echo latest)
+  if ! catalogue_index "$saved" >/dev/null; then
+    if [[ $saved == *[0-9].[0-9]* ]] && [ -z "$OPT_VERSION" ] && ! $ask; then
+      $PACKAGES_OK || die "$saved, the version you picked before, needs GitHub's version list, which couldn't be read. Try again later, or ./install.sh --version latest"
+      die "$saved, the version you picked before, can't be downloaded any more. Run ./install.sh to pick another, or ./install.sh --version latest"
+    fi
+    [ -n "$OPT_VERSION" ] || warn "'$saved', the version you picked before, isn't offered any more, so the default is latest"
+    saved=latest
+  fi
+  choice=${OPT_VERSION:-$saved}
+  if $ask; then
+    print_catalogue "$saved"
+    while :; do
+      read -r -p "  Install which one? Number or name [Enter = $saved]: " reply || reply=""
+      reply=${reply:-$saved}
+      if [[ $reply =~ ^[0-9]+$ ]] && [ "$reply" -ge 1 ] && [ "$reply" -le "${#CAT_NAME[@]}" ]; then
+        choice=${CAT_NAME[reply - 1]}
+        break
+      fi
+      catalogue_index "$reply" typed >/dev/null && { choice=$reply; break; }
+      echo "  '$reply' isn't in the list, type its number or name"
+    done
+  fi
+  if [ -n "$OPT_VERSION" ] || $ask; then
+    i=$(catalogue_index "$choice" typed) || die "'$choice' isn't available, ./install.sh --list-versions shows what is"
+  else
+    i=$(catalogue_index "$choice")
+  fi
+  choice=${CAT_NAME[i]}
+  MOD_VERSION=${CAT_VERSION[i]} MOD_URL=${CAT_URL[i]} MOD_SHA=${CAT_SHA[i]} MOD_CHANNEL=${CAT_CHANNEL[i]}
+  [ "$MOD_CHANNEL" = - ] && MOD_CHANNEL=""
+  mkdir -p "$STATE"
+  printf '%s\n' "$choice" > "$STATE/selection"
+  if [ "${CAT_KIND[i]}" = pin ] && [ "$(printf '%s\n' "$MOD_VERSION" "${CAT_VERSION[0]}" | sort -V | tail -n 1)" != "$MOD_VERSION" ]; then
+    ok "staying on $choice (latest is ${CAT_VERSION[0]}; ./install.sh --version latest follows updates again)"
+  else
+    ok "$choice: $MOD_VERSION${MOD_CHANNEL:+ $MOD_CHANNEL}"
+  fi
+}
+
 install_mod() {
   echo
   echo "Titanfall 2 VR mod:"
-  local manifest mod_version mod_url mod_sha commit source ns_version ns_url ns_sha
-  manifest=$(curl -fsSL "$MANIFEST_URL?t=$(date +%s)") || die "couldn't download $MANIFEST_URL"
-  read -r mod_version mod_url mod_sha commit < <(python3 -c '
-import json, sys
-m = json.load(sys.stdin)
-t = m["titanfall2vr"]
-print(t["version"], t["url"], t["sha256"], m["installer"]["commit"])' <<<"$manifest")
-  [ -n "${commit:-}" ] || die "couldn't read the Titanfall 2 VR entry from $MANIFEST_URL"
+  local source ns_version ns_url ns_sha
 
   # Northstar is pinned in the official installer's source, read it from the same release
-  source=$(curl -fsSL "$REPO_RAW/$commit/src/Installer/Installers/Titanfall2Installer.cs") \
+  source=$(curl -fsSL "$REPO_RAW/$COMMIT/src/Installer/Installers/Titanfall2Installer.cs") \
     || die "couldn't read the official installer's Northstar pin"
   ns_version=$(sed -n 's/.*NorthstarVersion = "\([^"]*\)".*/\1/p' <<<"$source")
   ns_url=$(sed -n 's/.*NorthstarUrl = "\([^"]*\)".*/\1/p' <<<"$source")
   ns_sha=$(sed -n 's/.*NorthstarSha256 = "\([^"]*\)".*/\1/p' <<<"$source")
   [ -n "$ns_version" ] && [ -n "$ns_url" ] && [ -n "$ns_sha" ] || die "couldn't find the Northstar pin in Titanfall2Installer.cs"
 
-  local wanted="mod=$mod_version northstar=$ns_version"
+  local wanted="mod=$MOD_VERSION${MOD_CHANNEL:+ $MOD_CHANNEL} northstar=$ns_version"
   if [ "$FORCE" = 0 ] && [ "$(cat "$STATE/version" 2>/dev/null)" = "$wanted" ] && core_files_present; then
     ok "up to date ($wanted)"
     return
@@ -730,8 +885,9 @@ print(t["version"], t["url"], t["sha256"], m["installer"]["commit"])' <<<"$manif
   echo "  installing $wanted"
 
   mkdir -p "$CACHE" "$STATE"
-  local mod_zip="$CACHE/Titanfall2VR-$mod_version.zip" ns_zip="$CACHE/Northstar-$ns_version.zip"
-  fetch "$mod_url" "$mod_sha" "$mod_zip"
+  local mod_zip ns_zip="$CACHE/Northstar-$ns_version.zip"
+  mod_zip="$CACHE/$(basename "$MOD_URL")"
+  fetch "$MOD_URL" "$MOD_SHA" "$mod_zip"
   fetch "$ns_url" "$ns_sha" "$ns_zip"
 
   WORK=$(mktemp -d "$CACHE/work.XXXXXX")
@@ -861,6 +1017,10 @@ uninstall() {
 }
 
 # ---------------------------------------------------------------- main --
+if [ "$MODE" = list ]; then
+  list_versions
+  exit 0
+fi
 discover
 preflight
 
@@ -869,6 +1029,7 @@ case "$MODE" in
   uninstall) uninstall ;;
   install)
     [ "$fails" = 0 ] || die "fix the failed checks above first"
+    choose_release
     setup_proton
     fails_before=$fails
     glibc_check
