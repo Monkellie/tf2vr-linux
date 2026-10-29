@@ -232,6 +232,7 @@ ea_signed_in() {
   [ "$size" -ge "$ea_log_start" ] || ea_log_start=0
   grep -q onAuthSuccessUpdated < <(tail -c +$((ea_log_start + 1)) "$EA_DATA/Logs/EADesktop.log")
 }
+EA_VR_LOG=""
 if ! ea_running; then
   # The EA app finds its background service through this file. A killed session leaves it behind,
   # and when the new service gets the old one's Wine PID, the EA app dials the dead port for 20 s,
@@ -239,7 +240,9 @@ if ! ea_running; then
   rm -f "$EA_DATA/backgroundservice.ini"
   ea_log_start=$(stat -c %s "$EA_DATA/Logs/EADesktop.log" 2>/dev/null || echo 0)
   echo "Starting the EA app..."
-  "$PROTON_BIN" run "$EA_EXE" >/dev/null 2>&1 &
+  EA_VR_LOG="$LOG_DIR/ea-app.log"
+  env -u PROTON_LOG WINEDEBUG="${WINEDEBUG:--all},warn+steam,err+steam,+vrclient,+openxr" \
+    "$PROTON_BIN" run "$EA_EXE" >"$EA_VR_LOG" 2>&1 &
   for _ in $(seq 1 45); do ea_running && break; sleep 1; done
   if [ "$GAME_SOURCE" = steam ]; then
     ea_running || die "The EA app didn't start. Launch Titanfall 2 normally from Steam once to check you're signed in."
@@ -335,12 +338,19 @@ vr_diagnosis() {
     elif [ "$state" = 0xffffffff ]; then
       echo "  $runtime couldn't start. It runs on your OpenXR runtime${RT_NAME:+ ($RT_NAME)}, so that has to be running with the headset connected before you launch. Connect the headset, then launch again."
     elif ! grep -q openxr_vulkan_instance_extensions <<<"$q"; then
-      echo "  OpenVR started, but the OpenXR runtime${RT_NAME:+ ($RT_NAME)} didn't answer Proton's check: it isn't running or the headset isn't connected."
+      echo "  OpenVR started through the bridge, so the OpenXR runtime${RT_NAME:+ ($RT_NAME)} was up, but Proton's own OpenXR check against it failed. Please report it with this log and $LOG_DIR/ea-app.log."
     else
       echo "  Proton's VR setup worked, so something else failed. Please report it with this log and the crash folder."
     fi
   else
     echo "  Start your VR runtime and connect the headset before launching, then launch again."
+  fi
+  local vrmsg=""
+  [ -n "$EA_VR_LOG" ] && vrmsg=$(grep -E ':(steam|vrclient|openxr):' "$EA_VR_LOG" 2>/dev/null |
+    grep -iE 'fail|unable|could not|error|unsupported|runtime path' | grep -v ':__wineopenxr_GetVulkan' | tail -n 8)
+  if [ -n "$vrmsg" ]; then
+    echo "Proton's VR setup messages ($EA_VR_LOG):"
+    sed 's/^/  /' <<<"$vrmsg"
   fi
   xlog="${XDG_STATE_HOME:-$HOME/.local/state}/xrizer/xrizer.txt"
   if [[ ${runtime:-$VR_BRIDGE} == *xrizer* ]] && [ -f "$xlog" ] && [ "$(stat -c %Y "$xlog")" -ge "$LAUNCH_START" ]; then

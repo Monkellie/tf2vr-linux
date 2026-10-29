@@ -94,7 +94,7 @@ Switch Titanfall 2 back to your old Proton in Steam (Properties → Compatibilit
 | `invalid option name set: pipefail` or `$'\r': command not found` | The scripts got Windows line endings on the way to your PC. Run `sed -i 's/\r$//' install.sh tf2vr` in the tf2vr-linux folder, or download them again with `git clone`. |
 | The game says you're logged out of Origin, then quits | [Update](#update) to the latest scripts. If the EA app's window asks you to sign in, do. ([why](#why-does-the-launcher-manage-the-ea-app)) |
 | Crash with code `0xC0000409` (3221226505) | Check Titanfall 2 is set to Proton-TF2VR in Steam, then run `./install.sh --refresh-proton`. ([why](#why-does-it-need-its-own-copy-of-proton)) |
-| Crash with code `0xC0000409`, and `stderr.txt` says `negotiation failed with error -6` (WiVRn, Monado) | Proton's VR setup failed: no OpenVR bridge, or the VR runtime wasn't running with the headset connected when you launched. Install xrizer ([how](#can-i-play-without-steamvr)), start WiVRn or Monado and connect the headset *before* `tf2vr`, then launch again. `launch.log` explains which part failed. When reporting it, attach `launch.log` and `~/.local/state/xrizer/xrizer.txt`. |
+| Crash with code `0xC0000409`, and `stderr.txt` says `negotiation failed with error -6` (WiVRn, Monado) | Proton's VR setup failed: no OpenVR bridge, or the VR runtime wasn't running with the headset connected when you launched. Install xrizer ([how](#can-i-play-without-steamvr)), start WiVRn or Monado and connect the headset *before* `tf2vr`, then launch again. `launch.log` explains which part failed. When reporting it, attach `launch.log`, `~/.local/state/tf2vr/ea-app.log` and `~/.local/state/xrizer/xrizer.txt`. |
 | The right eye lags behind the left when you turn your head | Run `./install.sh` again. It rebuilds Proton-TF2VR if its DXVK has the bug that causes this. ([why](#why-does-it-need-its-own-copy-of-proton)) |
 | Crash in `MSVCP140.dll` right after the mod loads | Run `./install.sh` again. ([why](#why-does-it-install-a-newer-vc-runtime)) |
 | `install.sh`: `couldn't install the VC++ runtime` | Install `cabextract` and run `./install.sh` again, or run `protontricks 1237970 vcrun2022`. |
@@ -115,7 +115,7 @@ Switch Titanfall 2 back to your old Proton in Steam (Properties → Compatibilit
 | `install.sh`: `glibc … is too old` | Your distro release is too old for the current Proton. Upgrade to one with glibc 2.38 or newer. ([which ones](#which-headsets-and-distros-work)) |
 
 **Still stuck?** [Open an issue](https://github.com/Monkellie/tf2vr-linux/issues) with these files. Collect them after the game has closed, or they'll be cut off:
-- `~/.local/state/tf2vr/launch.log`
+- `~/.local/state/tf2vr/launch.log`, and `~/.local/state/tf2vr/ea-app.log` if VR didn't start (Proton's VR setup messages)
 - `Titanfall2/TF2VR/plugins/Titanfall2VR-data/engine.txt`
 - the newest `Titanfall2/TF2VR/logs/nslog*.txt`
 - the newest folder in `Titanfall2/TF2VR/crashes/`
