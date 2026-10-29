@@ -94,7 +94,7 @@ Switch Titanfall 2 back to your old Proton in Steam (Properties → Compatibilit
 | `invalid option name set: pipefail` or `$'\r': command not found` | The scripts got Windows line endings on the way to your PC. Run `sed -i 's/\r$//' install.sh tf2vr` in the tf2vr-linux folder, or download them again with `git clone`. |
 | The game says you're logged out of Origin, then quits | [Update](#update) to the latest scripts. If the EA app's window asks you to sign in, do. ([why](#why-does-the-launcher-manage-the-ea-app)) |
 | Crash with code `0xC0000409` (3221226505) | Check Titanfall 2 is set to Proton-TF2VR in Steam, then run `./install.sh --refresh-proton`. ([why](#why-does-it-need-its-own-copy-of-proton)) |
-| Crash with code `0xC0000409`, and `stderr.txt` says `negotiation failed with error -6` (WiVRn, Monado) | Proton found no OpenVR bridge. Install xrizer. ([how](#can-i-play-without-steamvr)) |
+| Crash with code `0xC0000409`, and `stderr.txt` says `negotiation failed with error -6` (WiVRn, Monado) | Proton's VR setup failed: no OpenVR bridge, or the VR runtime wasn't running with the headset connected when you launched. Install xrizer ([how](#can-i-play-without-steamvr)), start WiVRn or Monado and connect the headset *before* `tf2vr`, then launch again. `launch.log` explains which part failed. When reporting it, attach `launch.log` and `~/.local/state/xrizer/xrizer.txt`. |
 | The right eye lags behind the left when you turn your head | Run `./install.sh` again. It rebuilds Proton-TF2VR if its DXVK has the bug that causes this. ([why](#why-does-it-need-its-own-copy-of-proton)) |
 | Crash in `MSVCP140.dll` right after the mod loads | Run `./install.sh` again. ([why](#why-does-it-install-a-newer-vc-runtime)) |
 | `install.sh`: `couldn't install the VC++ runtime` | Install `cabextract` and run `./install.sh` again, or run `protontricks 1237970 vcrun2022`. |
@@ -225,7 +225,7 @@ Proton needs one more piece: an **OpenVR bridge**, xrizer or OpenComposite. Befo
   Restart WiVRn after that. The same applies after a WiVRn update: start WiVRn once before `tf2vr` so it registers the new version.
 - **WiVRn from your distro's package, or Monado:** install [xrizer](https://github.com/Supreeeme/xrizer) (your distro's package, or build it and put it in `~/.local/share/xrizer`, so that `~/.local/share/xrizer/bin/linux64/vrclient.so` exists). If it isn't registered in `openvrpaths.vrpath`, `tf2vr` finds it in `~/.local/share/xrizer`, `/usr/lib`, `/usr/share` or `/opt` and uses it for the game only.
 
-`launch.log` shows the bridge each launch used (`OpenVR bridge: …`), and `./install.sh --check` shows it too.
+The bridge starts your OpenXR runtime, so WiVRn or Monado has to be running with the headset connected **before** you run `tf2vr`; `tf2vr` warns when it can't see `wivrn-server` or `monado-service`. `launch.log` shows the bridge each launch used (`OpenVR bridge: …`), and `./install.sh --check` shows it too. If OpenXR still can't start, `launch.log` says whether the bridge or the runtime failed, and xrizer writes its reason to `~/.local/state/xrizer/xrizer.txt`.
 
 ### Which headsets and distros work?
 
