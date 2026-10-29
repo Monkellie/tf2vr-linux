@@ -342,6 +342,12 @@ host_libs() {
 
 base_label() { awk '{ print $NF }' "$1/version" 2>/dev/null || basename "$1"; }
 
+dxvk_version() { sed -n 's/.*dxvk (\(.*\))$/\1/p' "$1/files/lib/wine/dxvk/version" 2>/dev/null | head -n 1; }
+
+dxvk_lags() {
+  [[ $(dxvk_version "$1") =~ ^v3\.1\.1-([0-9]+)-g ]] && [ "${BASH_REMATCH[1]}" -ge 60 ] && [ "${BASH_REMATCH[1]}" -le 67 ]
+}
+
 proton_candidates() {
   local d
   if [ -n "$OPT_BASE" ]; then printf '%s\n' "$OPT_BASE"; return; fi
@@ -360,6 +366,7 @@ pick_base() {
   while IFS= read -r d; do
     [ -f "$d/$MMDEVAPI" ] && [ ! -f "$d/.tf2vr" ] || continue
     case "$d" in *.partial) continue ;; esac
+    dxvk_lags "$d" && continue
     [ "$(mmdevapi check "$d/$MMDEVAPI")" = unpatched ] || continue
     BASE=$d BASE_LABEL=$(base_label "$d")
     return 0
@@ -381,6 +388,57 @@ glibc_check() {
     ok "glibc $have (Proton needs $need)"
   else
     fail "glibc $have is too old: Proton $(cut -d' ' -f2 "$dir/version") needs $need or newer outside Steam (Ubuntu 22.04, Mint 21 and Pop!_OS 22.04 have 2.35, Debian 12 has 2.36). A newer distro release is needed, e.g. Ubuntu 24.04, Mint 22 or Debian 13."
+  fi
+}
+
+openxr_runtime() {
+  python3 - "$1" <<'PY' 2>/dev/null
+import json, os, sys
+path = os.path.realpath(sys.argv[1])
+r = json.load(open(path))["runtime"]
+lib = r.get("library_path") or ""
+if "/" in lib and not os.path.isabs(lib):
+    lib = os.path.normpath(os.path.join(os.path.dirname(path), lib))
+elif "/" not in lib:
+    lib = ""
+print(f"{r.get('name') or r.get('library_path') or path}\t{lib}")
+PY
+}
+
+openvr_bridge() {
+  local data="${XDG_DATA_HOME:-$HOME/.local/share}" registered f
+  registered=$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["runtime"][0])' \
+    "${XDG_CONFIG_HOME:-$HOME/.config}/openvr/openvrpaths.vrpath" 2>/dev/null) || true
+  if [ -f "$registered/bin/linux64/vrclient.so" ] && [ ! -e "$registered/bin/linux64/vrserver" ]; then
+    printf '%s\n' "$registered"
+    return
+  fi
+  while IFS= read -r f; do
+    f=${f%/bin/linux64/vrclient.so}
+    [ -e "$f/bin/linux64/vrserver" ] || { printf '%s\n' "$f"; return; }
+  done < <(find -L "$data/xrizer" "$data/OpenComposite" \
+             "$data/flatpak/app/io.github.wivrn.wivrn/current/active/files" \
+             /var/lib/flatpak/app/io.github.wivrn.wivrn/current/active/files \
+             /usr/lib /usr/lib64 /usr/share /usr/local /opt -maxdepth 5 \
+             \( -name Steam -o -name steamapps -o -name flatpak -o -name icons \) -prune \
+             -o -path '*/bin/linux64/vrclient.so' -print 2>/dev/null)
+}
+
+wivrn_flatpak_check() {
+  command -v flatpak >/dev/null 2>&1 && flatpak info io.github.wivrn.wivrn >/dev/null 2>&1 || return 0
+  local granted dir missing=()
+  granted=$( { flatpak info --show-permissions io.github.wivrn.wivrn
+               flatpak override --show io.github.wivrn.wivrn
+               flatpak override --user --show io.github.wivrn.wivrn; } 2>/dev/null \
+             | sed -n 's/^filesystems=//p' | tr ';' '\n') || true
+  for dir in openxr openvr; do
+    grep -qxE "(host|home|xdg-config|xdg-config/$dir|~/\.config|~/\.config/$dir|$HOME/\.config|$HOME/\.config/$dir)(:rw|:create)?" <<<"$granted" \
+      || missing+=("--filesystem=xdg-config/$dir:create")
+  done
+  if [ "${#missing[@]}" -gt 0 ]; then
+    warn "WiVRn (Flatpak) can't register itself as your VR runtime. Allow it, then restart WiVRn: flatpak override --user ${missing[*]} io.github.wivrn.wivrn"
+  else
+    ok "WiVRn (Flatpak) can register itself as your VR runtime"
   fi
 }
 
@@ -447,16 +505,21 @@ preflight() {
     warn "EA app not found in the prefix - install it there with your launcher and sign in"
   fi
 
-  if [ -f "$PROTON" ] && [ "$(mmdevapi check "$TOOL/$MMDEVAPI")" = patched ]; then
-    ok "$TOOL_NAME ready ($(base_label "$TOOL"), audio fix applied)"
+  if [ -f "$PROTON" ] && dxvk_lags "$TOOL"; then
+    warn "$TOOL_NAME has DXVK $(dxvk_version "$TOOL"), which makes the right eye lag a frame behind the left, so it will be rebuilt"
+  fi
+  if [ -f "$PROTON" ] && [ "$(mmdevapi check "$TOOL/$MMDEVAPI")" = patched ] && ! dxvk_lags "$TOOL"; then
+    ok "$TOOL_NAME ready ($(base_label "$TOOL"), DXVK $(dxvk_version "$TOOL"), audio fix applied)"
   elif pick_base; then
     ok "Proton to build $TOOL_NAME from: $BASE_LABEL ($BASE)"
+  elif [ -n "$OPT_BASE" ] && dxvk_lags "$OPT_BASE"; then
+    fail "$OPT_BASE has DXVK $(dxvk_version "$OPT_BASE"), which makes the right eye lag a frame behind the left; pick another Proton or leave out --proton-base"
   elif [ -n "$OPT_BASE" ]; then
     fail "The audio fix doesn't match $OPT_BASE ($(base_label "$OPT_BASE")); Proton Experimental and $GE_NAME are known to work"
   else
     ok "No compatible Proton installed - $GE_NAME (about 530 MB) will be downloaded to build $TOOL_NAME"
   fi
-  if [ -n "$OPT_BASE" ] && [ "${BASE:-}" != "$OPT_BASE" ] && [ -f "$PROTON" ] && [ "$REFRESH_PROTON" = 0 ]; then
+  if [ -n "$OPT_BASE" ] && [ "${BASE:-}" != "$OPT_BASE" ] && [ -f "$PROTON" ] && [ "$REFRESH_PROTON" = 0 ] && ! dxvk_lags "$TOOL"; then
     warn "$TOOL_NAME already exists, so --proton-base is only used with --refresh-proton"
   fi
   glibc_check
@@ -468,10 +531,26 @@ preflight() {
       || warn "Steam runs Titanfall 2 with '${tool:-default Proton}' - switch it to $TOOL_NAME after install (Properties -> Compatibility)"
   fi
 
-  local rt="${XDG_CONFIG_HOME:-$HOME/.config}/openxr/1/active_runtime.json"
+  wivrn_flatpak_check
+  local rt="${XDG_CONFIG_HOME:-$HOME/.config}/openxr/1/active_runtime.json" rt_name rt_lib bridge
+  [ -L "$rt" ] && [ ! -e "$rt" ] \
+    && warn "$rt points at $(readlink "$rt"), which no longer exists. Start your VR runtime once so it registers again"
   [ -f "$rt" ] || rt=/etc/xdg/openxr/1/active_runtime.json
   if [ -f "$rt" ]; then
-    ok "OpenXR runtime: $(python3 -c 'import json,sys; r=json.load(open(sys.argv[1]))["runtime"]; print(r.get("name") or r["library_path"])' "$rt" 2>/dev/null || echo "$rt")"
+    IFS=$'\t' read -r rt_name rt_lib < <(openxr_runtime "$rt") || true
+    if [ -n "$rt_lib" ] && [ ! -e "$rt_lib" ]; then
+      warn "OpenXR runtime ${rt_name:-$rt}: its library $rt_lib is missing. Start your VR runtime once so it registers its current version"
+    else
+      ok "OpenXR runtime: ${rt_name:-$rt}"
+    fi
+    if ! grep -qiE 'steamvr|steamxr' "$(readlink -f "$rt")"; then
+      bridge=$(openvr_bridge)
+      if [ -n "$bridge" ]; then
+        ok "OpenVR bridge for Proton's VR setup: $bridge"
+      else
+        warn "No OpenVR bridge (xrizer or OpenComposite) found. Proton needs one even with WiVRn or Monado, or the game crashes with 0xC0000409 - see 'Can I play without SteamVR?' in README.md"
+      fi
+    fi
   else
     warn "No active OpenXR runtime - in SteamVR: Settings -> OpenXR -> Set SteamVR as OpenXR runtime"
   fi
@@ -496,11 +575,12 @@ download_ge() {
 setup_proton() {
   echo
   echo "$TOOL_NAME:"
-  if [ "$REFRESH_PROTON" = 0 ] && [ -f "$PROTON" ] && [ "$(mmdevapi check "$TOOL/$MMDEVAPI")" = patched ]; then
+  if [ "$REFRESH_PROTON" = 0 ] && [ -f "$PROTON" ] && [ "$(mmdevapi check "$TOOL/$MMDEVAPI")" = patched ] && ! dxvk_lags "$TOOL"; then
     ok "already set up ($(base_label "$TOOL"))"
     return
   fi
   if ! pick_base; then
+    [ -z "$OPT_BASE" ] || ! dxvk_lags "$OPT_BASE" || die "$OPT_BASE has DXVK $(dxvk_version "$OPT_BASE"), which makes the right eye lag a frame behind the left"
     [ -z "$OPT_BASE" ] || die "the audio fix doesn't match $OPT_BASE"
     download_ge
   fi

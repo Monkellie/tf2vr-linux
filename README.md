@@ -10,7 +10,7 @@ Play [CircuitLord's Titanfall 2 VR mod](https://github.com/CircuitLord/CircuitLo
 - An **x86_64** Linux PC with a current distro (glibc 2.38 or newer, [details](#which-headsets-and-distros-work)). A standalone Steam Frame or other ARM device can't run this ([why](#can-i-play-on-a-steam-frame-or-other-arm-device)).
 - **Titanfall 2 on Steam**, or from the **EA app** run through Faugus, Heroic, Lutris or Bottles ([without Steam](#without-steam-ea-app))
 - **Proton Experimental**, installed in Steam: Library → search "Proton Experimental" → Install. Without Steam, `install.sh` downloads a compatible Proton itself.
-- A **VR runtime**: SteamVR (Settings → OpenXR → "Set SteamVR as OpenXR runtime"), or WiVRn / Monado
+- A **VR runtime**: SteamVR (Settings → OpenXR → "Set SteamVR as OpenXR runtime"), or WiVRn / Monado without SteamVR ([what that needs](#can-i-play-without-steamvr))
 - A few tools:
   - Arch, CachyOS, EndeavourOS: `sudo pacman -S --needed python unzip cabextract`
   - Debian, Ubuntu: `sudo apt install python3 curl unzip cabextract`
@@ -91,8 +91,11 @@ Switch Titanfall 2 back to your old Proton in Steam (Properties → Compatibilit
 | The game starts flat | You used Steam's Play button. Start VR with `tf2vr`. |
 | `tf2vr: command not found` | Run `~/.local/bin/tf2vr`, or [add `~/.local/bin` to your PATH](#arch-cachyos-and-other-arch-based-distros). |
 | `install.sh` prints `FAIL` | Install what it names, then run `./install.sh` again. |
+| `invalid option name set: pipefail` or `$'\r': command not found` | The scripts got Windows line endings on the way to your PC. Run `sed -i 's/\r$//' install.sh tf2vr` in the tf2vr-linux folder, or download them again with `git clone`. |
 | The game says you're logged out of Origin, then quits | [Update](#update) to the latest scripts. If the EA app's window asks you to sign in, do. ([why](#why-does-the-launcher-manage-the-ea-app)) |
 | Crash with code `0xC0000409` (3221226505) | Check Titanfall 2 is set to Proton-TF2VR in Steam, then run `./install.sh --refresh-proton`. ([why](#why-does-it-need-its-own-copy-of-proton)) |
+| Crash with code `0xC0000409`, and `stderr.txt` says `negotiation failed with error -6` (WiVRn, Monado) | Proton found no OpenVR bridge. Install xrizer. ([how](#can-i-play-without-steamvr)) |
+| The right eye lags behind the left when you turn your head | Run `./install.sh` again. It rebuilds Proton-TF2VR if its DXVK has the bug that causes this. ([why](#why-does-it-need-its-own-copy-of-proton)) |
 | Crash in `MSVCP140.dll` right after the mod loads | Run `./install.sh` again. ([why](#why-does-it-install-a-newer-vc-runtime)) |
 | `install.sh`: `couldn't install the VC++ runtime` | Install `cabextract` and run `./install.sh` again, or run `protontricks 1237970 vcrun2022`. |
 | `engine.txt` stops at `stage=openxr_instance` | Start SteamVR (or WiVRn / Monado), check the headset is detected, and check it's set as the OpenXR runtime. |
@@ -144,6 +147,8 @@ For the audio fix. The mod captures game audio through `ActivateAudioInterfaceAs
 The fix goes into the private copy only, after checking the surrounding bytes match, so your other games are untouched. The copy is frozen, so Steam updates can't break it. To rebuild it from a newer Proton Experimental, run `./install.sh --refresh-proton`.
 
 The fix only matches some Proton builds: Proton Experimental, Proton Hotfix and GE-Proton11-1, for example, but not newer GE-Proton releases, CachyOS or Wineland, which compile that code differently. `install.sh` uses the first compatible build it finds: Steam's Proton Experimental, then any compatible build in Steam's, Heroic's or umu's Proton folders. If there's none, it downloads GE-Proton11-1. `--proton-base DIR` picks a specific build. If the new `mmdevapi.dll` doesn't match the fix, the script refuses rather than guessing; keep the old copy and open an issue.
+
+It also skips Proton builds whose DXVK is `v3.1.1-60` to `v3.1.1-67` (Proton Experimental and Hotfix from about 5 to 13 October 2026). That DXVK can finish a frame before the game has submitted the right eye's rendering, so the headset shows the right eye one frame late ([#4](https://github.com/Monkellie/tf2vr-linux/issues/4), found by Molier). If your Proton-TF2VR was built from one of those, `./install.sh` rebuilds it, and `tf2vr` warns you at launch. `launch.log` shows which Proton and DXVK each launch used.
 
 Steam (or, without Steam, your launcher) has to be set to Proton-TF2VR as well, because normal and VR launches share one Wine prefix, and switching Wine versions on a prefix breaks things.
 
@@ -207,11 +212,26 @@ Not on the headset itself. A standalone Steam Frame is an ARM device, so it runs
 
 Streaming a Steam Frame to Linux SteamVR hasn't been tested with these scripts yet. Linux SteamVR ships the Frame's headset and controller profiles and the Steam Link streaming driver, so it should work like any other SteamVR headset. Reports welcome.
 
+### Can I play without SteamVR?
+
+Yes, with WiVRn or Monado as your OpenXR runtime. Start it and connect the headset, then run `tf2vr`. The launcher only starts SteamVR when SteamVR is your OpenXR runtime.
+
+Proton needs one more piece: an **OpenVR bridge**, xrizer or OpenComposite. Before the game can use OpenXR, Proton starts the OpenVR runtime named in `~/.config/openvr/openvrpaths.vrpath` to ask which Vulkan extensions VR needs. Without one that starts, Proton's OpenXR refuses to load (`negotiation failed with error -6` in `TF2VR/crashes/…/stderr.txt`), and the game crashes with `0xC0000409` ([#11](https://github.com/Monkellie/tf2vr-linux/issues/11)). SteamVR only works as the bridge while it's running.
+
+- **WiVRn Flatpak:** brings its own bridge and registers it when it starts. It needs to be allowed to write to `~/.config/openxr` and `~/.config/openvr` to do that ([#5](https://github.com/Monkellie/tf2vr-linux/issues/5)). `install.sh` checks, and prints the command if it can't:
+  ```
+  flatpak override --user --filesystem=xdg-config/openxr:create --filesystem=xdg-config/openvr:create io.github.wivrn.wivrn
+  ```
+  Restart WiVRn after that. The same applies after a WiVRn update: start WiVRn once before `tf2vr` so it registers the new version.
+- **WiVRn from your distro's package, or Monado:** install [xrizer](https://github.com/Supreeeme/xrizer) (your distro's package, or build it and put it in `~/.local/share/xrizer`, so that `~/.local/share/xrizer/bin/linux64/vrclient.so` exists). If it isn't registered in `openvrpaths.vrpath`, `tf2vr` finds it in `~/.local/share/xrizer`, `/usr/lib`, `/usr/share` or `/opt` and uses it for the game only.
+
+`launch.log` shows the bridge each launch used (`OpenVR bridge: …`), and `./install.sh --check` shows it too.
+
 ### Which headsets and distros work?
 
 Tested on PikaOS (Debian sid) on Wayland, with an NVIDIA GPU, a Valve Index, SteamVR 2.17.10, Proton Experimental 11.0 (2026-09-24), mod 1.0.10 and Northstar 1.31.13. The main menu and the campaign run in VR with tracked controllers and audio.
 
-- **Other headsets:** polar421 has played the campaign on a Quest 3S through WiVRn with a similar setup. With these scripts, a tethered WiVRn user has got as far as the mod finding the headset and controllers.
+- **Other headsets:** polar421 has played the campaign on a Quest 3S through WiVRn with a similar setup. With these scripts, it works on CachyOS with WiVRn and a Quest 2 ([#9](https://github.com/Monkellie/tf2vr-linux/issues/9)), and on Bazzite with the WiVRn Flatpak and no SteamVR ([#5](https://github.com/Monkellie/tf2vr-linux/issues/5)).
 - **Other distros:** anything x86_64 with **glibc 2.38 or newer** should work: Ubuntu 24.04+, Linux Mint 22+, Pop!_OS 24.04+, Debian 13+, Fedora 39+, and current Arch and its derivatives (see the [Arch notes](#arch-cachyos-and-other-arch-based-distros)). Steam runs Proton inside its own runtime, which brings a newer glibc, but these scripts run Proton outside it, so your system's glibc has to be new enough. Ubuntu 22.04, Mint 21 and Pop!_OS 22.04 (2.35) and Debian 12 (2.36) are too old. `install.sh` checks this.
 - **Untested:** SteamOS on x86 (Steam Deck), Flatpak Steam (`~/.var/app/com.valvesoftware.Steam/.local/share/Steam`), and EA-app copies through Faugus, Heroic, Lutris or Bottles.
 - **Two GPUs:** the game has to render on a GPU that has a monitor attached, and it has to be the same GPU your VR runtime uses.

@@ -58,6 +58,12 @@ import sys
 data = open(sys.argv[1], "rb").read()
 sys.exit(0 if data[0x369E:0x369E + 6] == bytes.fromhex("0f843efdffff") else 1)
 PY
+PROTON_DIR=$(dirname "$PROTON_BIN")
+DXVK=$(sed -n 's/.*dxvk (\(.*\))$/\1/p' "$PROTON_DIR/files/lib/wine/dxvk/version" 2>/dev/null | head -n 1)
+echo "Proton: $PROTON_DIR ($(awk '{ print $NF }' "$PROTON_DIR/version" 2>/dev/null)), DXVK ${DXVK:-unknown}"
+if [[ $DXVK =~ ^v3\.1\.1-([0-9]+)-g ]] && [ "${BASH_REMATCH[1]}" -ge 60 ] && [ "${BASH_REMATCH[1]}" -le 67 ]; then
+  echo "WARNING: this DXVK makes the right eye lag a frame behind the left. Run install.sh again to rebuild $(basename "$PROTON_DIR") from a fixed Proton."
+fi
 
 if [ "$GAME_SOURCE" = steam ]; then
   pgrep -x steam >/dev/null || die "Steam isn't running - start Steam first."
@@ -65,8 +71,12 @@ fi
 
 # Only SteamVR needs starting here; other OpenXR runtimes (WiVRn, Monado) are started by you
 RUNTIME_JSON="${XDG_CONFIG_HOME:-$HOME/.config}/openxr/1/active_runtime.json"
+STALE_RUNTIME=""
+[ -L "$RUNTIME_JSON" ] && [ ! -e "$RUNTIME_JSON" ] \
+  && STALE_RUNTIME="$RUNTIME_JSON points at $(readlink "$RUNTIME_JSON"), which no longer exists (the runtime was updated or removed). Start WiVRn or your VR runtime once so it registers again, or in SteamVR: Settings -> OpenXR -> Set SteamVR as OpenXR runtime."
 [ -f "$RUNTIME_JSON" ] || RUNTIME_JSON=/etc/xdg/openxr/1/active_runtime.json
-[ -f "$RUNTIME_JSON" ] || die "No OpenXR runtime is active. In SteamVR: Settings -> OpenXR -> Set SteamVR as OpenXR runtime."
+[ -f "$RUNTIME_JSON" ] || die "${STALE_RUNTIME:-No OpenXR runtime is active. In SteamVR: Settings -> OpenXR -> Set SteamVR as OpenXR runtime.}"
+[ -z "$STALE_RUNTIME" ] || echo "WARNING: $STALE_RUNTIME"
 if grep -qiE 'steamvr|steamxr' "$(readlink -f "$RUNTIME_JSON")"; then
   if ! pgrep -x vrserver >/dev/null; then
     command -v steam >/dev/null 2>&1 || die "SteamVR isn't running - start it, check the headset shows up, then launch again."
@@ -78,6 +88,53 @@ if grep -qiE 'steamvr|steamxr' "$(readlink -f "$RUNTIME_JSON")"; then
   fi
 else
   echo "OpenXR runtime: $(readlink -f "$RUNTIME_JSON") - make sure it's running and the headset is connected."
+  RT_LIB=$(python3 - "$RUNTIME_JSON" <<'PY' 2>/dev/null
+import json, os, sys
+path = os.path.realpath(sys.argv[1])
+lib = json.load(open(path))["runtime"].get("library_path") or ""
+if "/" in lib:
+    print(os.path.normpath(os.path.join(os.path.dirname(path), lib)))
+PY
+)
+  [ -z "$RT_LIB" ] || [ -e "$RT_LIB" ] \
+    || echo "WARNING: the runtime's library $RT_LIB is missing. Start your VR runtime (WiVRn, Monado) so it registers its current version, then launch again."
+
+  VRPATHS="${XDG_CONFIG_HOME:-$HOME/.config}/openvr/openvrpaths.vrpath"
+  VR_REGISTERED=$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["runtime"][0])' "$VRPATHS" 2>/dev/null)
+  openvr_bridge() {
+    local data="${XDG_DATA_HOME:-$HOME/.local/share}" f
+    if [ -f "$VR_REGISTERED/bin/linux64/vrclient.so" ] && [ ! -e "$VR_REGISTERED/bin/linux64/vrserver" ]; then
+      printf '%s\n' "$VR_REGISTERED"
+      return
+    fi
+    while IFS= read -r f; do
+      f=${f%/bin/linux64/vrclient.so}
+      [ -e "$f/bin/linux64/vrserver" ] || { printf '%s\n' "$f"; return; }
+    done < <(find -L "$data/xrizer" "$data/OpenComposite" \
+               "$data/flatpak/app/io.github.wivrn.wivrn/current/active/files" \
+               /var/lib/flatpak/app/io.github.wivrn.wivrn/current/active/files \
+               /usr/lib /usr/lib64 /usr/share /usr/local /opt -maxdepth 5 \
+               \( -name Steam -o -name steamapps -o -name flatpak -o -name icons \) -prune \
+               -o -path '*/bin/linux64/vrclient.so' -print 2>/dev/null)
+  }
+  VR_BRIDGE=$(openvr_bridge)
+  if [ -z "$VR_BRIDGE" ]; then
+    echo "WARNING: no OpenVR bridge (xrizer or OpenComposite) found${VR_REGISTERED:+, and $VRPATHS points at $VR_REGISTERED}. Proton needs one to set up VR, or the game crashes with 0xC0000409. See 'Can I play without SteamVR?' in tf2vr-linux's README."
+  elif [ "$VR_BRIDGE" = "$VR_REGISTERED" ]; then
+    echo "OpenVR bridge: $VR_BRIDGE"
+  else
+    VRPATHS_FILE="$LOG_DIR/openvrpaths.vrpath"
+    python3 - "$VRPATHS" "$VR_BRIDGE" "$VRPATHS_FILE" <<'PY'
+import json, sys
+try:
+    paths = json.load(open(sys.argv[1]))
+except Exception:
+    paths = {"jsonid": "vrpathreg", "version": 1}
+paths["runtime"] = [sys.argv[2]]
+json.dump(paths, open(sys.argv[3], "w"), indent=2)
+PY
+    echo "OpenVR bridge: $VR_BRIDGE (${VR_REGISTERED:-nothing} is registered in $VRPATHS, so using this one for the game only)"
+  fi
 fi
 
 # Same environment the Windows installer gives the game
@@ -85,6 +142,7 @@ while IFS= read -r v; do
   case "$v" in TF2VR_*) unset "$v" ;; esac
 done < <(compgen -e)
 unset XR_RUNTIME_JSON VR_PATHREG_OVERRIDE VR_CONFIG_PATH VR_LOG_PATH
+[ -n "${VRPATHS_FILE:-}" ] && export VR_PATHREG_OVERRIDE="$VRPATHS_FILE"
 export TF2VR_OPENXR=1
 
 # Settings often set globally for other games that this setup can't use or isn't tested with.
