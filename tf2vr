@@ -227,13 +227,18 @@ kill_orphans && echo "Closed Wine processes left over from an earlier session."
 # "EA Desktop\EA Desktop" is the EA app's link to its current version folder; Wine resolves it.
 EA_EXE='C:\Program Files\Electronic Arts\EA Desktop\EA Desktop\EADesktop.exe'
 ea_running() {
-  local p
-  for p in /proc/[0-9]*; do
-    case "$(tr '\0' '\n' 2>/dev/null < "$p/cmdline" | head -n 1)" in
-      *'\EADesktop.exe') return 0 ;;
-    esac
-  done
-  return 1
+  python3 - <<'PYEA'
+import glob, sys
+for path in glob.glob('/proc/[0-9]*/cmdline'):
+    try:
+        with open(path, 'rb') as stream:
+            exe = stream.read().split(b'\0', 1)[0]
+        if exe.replace(b'\\', b'/').rsplit(b'/', 1)[-1].lower() == b'eadesktop.exe':
+            sys.exit(0)
+    except OSError:
+        pass
+sys.exit(1)
+PYEA
 }
 EA_DATA="$PREFIX_DIR/pfx/drive_c/ProgramData/EA Desktop"
 ea_signed_in() {
