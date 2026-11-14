@@ -80,7 +80,23 @@ if [ "$GAME_SOURCE" = steam ]; then
 fi
 
 # Only SteamVR needs starting here; other OpenXR runtimes (WiVRn, Monado) are started by you
-RUNTIME_JSON="${XDG_CONFIG_HOME:-$HOME/.config}/openxr/1/active_runtime.json"
+RUNTIME_JSON="${XR_RUNTIME_JSON:-${XDG_CONFIG_HOME:-$HOME/.config}/openxr/1/active_runtime.json}"
+if [ -n "${XR_RUNTIME_JSON:-}" ] && [ ! -f "$RUNTIME_JSON" ]; then
+  die "XR_RUNTIME_JSON points at a missing runtime: $RUNTIME_JSON"
+fi
+if [ -n "${VR_OVERRIDE:-}" ] && [ ! -f "$VR_OVERRIDE/bin/linux64/vrclient.so" ]; then
+  die "VR_OVERRIDE has no bin/linux64/vrclient.so: $VR_OVERRIDE"
+fi
+if [ -n "${VR_PATHREG_OVERRIDE:-}" ] && [ -z "${VR_OVERRIDE:-}" ]; then
+  python3 - "$VR_PATHREG_OVERRIDE" <<'PYVR' || die "Invalid VR_PATHREG_OVERRIDE: $VR_PATHREG_OVERRIDE"
+import json, os, sys
+try:
+    runtime = json.load(open(sys.argv[1]))["runtime"][0]
+    assert isinstance(runtime, str) and os.path.isfile(os.path.join(runtime, "bin/linux64/vrclient.so"))
+except (OSError, ValueError, KeyError, IndexError, TypeError, AssertionError):
+    sys.exit(1)
+PYVR
+fi
 STALE_RUNTIME="" RT_NAME="" RT_SERVER="" VR_BRIDGE=""
 [ -L "$RUNTIME_JSON" ] && [ ! -e "$RUNTIME_JSON" ] \
   && STALE_RUNTIME="$RUNTIME_JSON points at $(readlink "$RUNTIME_JSON"), which no longer exists (the runtime was updated or removed). Start WiVRn or your VR runtime once so it registers again, or in SteamVR: Settings -> OpenXR -> Set SteamVR as OpenXR runtime."
@@ -118,10 +134,15 @@ PY
     echo "WARNING: $RT_NAME isn't running ($RT_SERVER not found). Start it and connect the headset before launching, or Proton's VR setup fails and the game crashes with 0xC0000409."
   fi
 
-  VRPATHS="${XDG_CONFIG_HOME:-$HOME/.config}/openvr/openvrpaths.vrpath"
+  VRPATHS="${VR_PATHREG_OVERRIDE:-${XDG_CONFIG_HOME:-$HOME/.config}/openvr/openvrpaths.vrpath}"
   VR_REGISTERED=$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["runtime"][0])' "$VRPATHS" 2>/dev/null)
   openvr_bridge() {
     local data="${XDG_DATA_HOME:-$HOME/.local/share}" f
+    if [ -n "${VR_OVERRIDE:-}" ]; then
+      [ -f "$VR_OVERRIDE/bin/linux64/vrclient.so" ] || return 1
+      printf '%s\n' "$VR_OVERRIDE"
+      return
+    fi
     if [ -f "$VR_REGISTERED/bin/linux64/vrclient.so" ] && [ ! -e "$VR_REGISTERED/bin/linux64/vrserver" ]; then
       printf '%s\n' "$VR_REGISTERED"
       return
@@ -160,7 +181,8 @@ fi
 while IFS= read -r v; do
   case "$v" in TF2VR_*) unset "$v" ;; esac
 done < <(compgen -e)
-unset XR_RUNTIME_JSON VR_PATHREG_OVERRIDE VR_CONFIG_PATH VR_LOG_PATH
+# Keep runtime selectors supplied by Meteor or another external XR launcher.
+unset VR_CONFIG_PATH VR_LOG_PATH
 [ -n "${VRPATHS_FILE:-}" ] && export VR_PATHREG_OVERRIDE="$VRPATHS_FILE"
 export TF2VR_OPENXR=1
 
