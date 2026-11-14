@@ -55,6 +55,31 @@ Put your headset on, then run `tf2vr` in a terminal or pick **Titanfall 2 VR** i
 
 For mod settings, controls and help with the mod itself, see [CircuitLord's Discord](https://discord.gg/MTKwud2cCP).
 
+### Externally managed runtimes (including Nightfall Meteor)
+
+The launcher honors `XR_RUNTIME_JSON` for OpenXR, `VR_PATHREG_OVERRIDE` for
+an OpenVR registry file, and `VR_OVERRIDE` for an OpenVR runtime directory.
+An explicit `VR_OVERRIDE` takes precedence over the registry. Invalid explicit
+paths fail with an error instead of silently selecting another installation.
+Without overrides, the existing runtime discovery still applies.
+
+For [Nightfall Meteor](https://github.com/tB0nE/nightfall), connect the headset
+with Meteor's Automatic XR enabled before launching. Its active registration
+must select Meteor's OpenXR runtime and bundled xrizer. An external wrapper can
+also supply the selectors above; `tf2vr` preserves them when starting Proton.
+Use a Meteor build that keeps its runtime alive through Proton's temporary VR
+detection sessions. Otherwise the detection probe can close the runtime before
+Proton finishes OpenXR initialization.
+
+A Bazzite installation using an EA App/Lutris copy, mod 1.0.25, Northstar
+1.31.13 and Proton Experimental `experimental-11.0-20261112-x86_64` was confirmed
+working with that Meteor fix and these launcher changes. Its native Steam
+shortcut used a wrapper that cleared inherited `LD_PRELOAD` and set
+`PROTON_USE_XALIA=0`; these are settings from the tested setup, not global
+launcher defaults. When adding such a wrapper as a non-Steam game, enable
+**Include in VR Library** and leave forced Steam compatibility disabled: the
+wrapper starts `tf2vr`, which starts Proton itself.
+
 ## Update
 
 ```sh
